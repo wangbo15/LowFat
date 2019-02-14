@@ -1,0 +1,17 @@
+## ignore the build dir ##
+build/
+release/
+bootstrap/
+config/
+
+llvm-4.0.0.src/.idea/
+llvm-4.0.0.src/cmake-build-debug/
+test.log
+
+*.[oa]
+*.so
+
+test/*.ll
+test/a.out
+
+llvm-4.0.0.src/projects/compiler-rt/lib/lowfat/CMakeLists.txt

@@ -48,10 +48,15 @@
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Constants.h"
+
 extern "C"
 {
 #include "lowfat_config.inc"
 #include "lowfat.h"
+
+#include "lowfat_ds.h"
 }
 
 using namespace llvm;
@@ -155,6 +160,9 @@ static bool isInterestingGlobal(GlobalVariable *GV);
 /*
  * Options
  */
+static cl::opt<bool> option_symbolize("lowfat-symbolize",
+    cl::desc("Symbolizing constraints"));
+
 static cl::opt<bool> option_debug("lowfat-debug",
     cl::desc("Dump before-and-after LowFat instrumented LLVM IR"));
 static cl::opt<bool> option_no_check_reads("lowfat-no-check-reads",
@@ -1670,6 +1678,162 @@ static bool isBlacklisted(SpecialCaseList *SCL, Function *F)
     return SCL->inSection("fun", F->getName());
 }
 
+
+static void initializeGlobalHead(Module* M, GlobalVariable *gvar_struct_head, StructType * head_type, StructType * list_type){
+
+    Constant *name = ConstantDataArray::getString(M->getContext(), gvar_struct_head->getName(), true);
+
+    // plus one for \0
+    size_t len = gvar_struct_head->getName().size() + 1;
+
+    Type* arr_type = ArrayType::get(IntegerType::get(M->getContext(), 8), len);
+    GlobalVariable* gvar_name = new GlobalVariable(*M,
+            arr_type,
+            true,
+            GlobalValue::PrivateLinkage,
+            name,
+            ".str");
+    gvar_name->setAlignment(1);
+
+    ConstantInt* zero = ConstantInt::get(M->getContext(), APInt(32, StringRef("0"), 10));
+
+    std::vector<Constant*> indices;
+    indices.push_back(zero);
+    indices.push_back(zero);
+
+    Constant* get_ele_ptr = ConstantExpr::getGetElementPtr(arr_type, gvar_name, indices);
+
+    std::vector<Constant*> contents;
+    contents.push_back(zero);
+    contents.push_back(get_ele_ptr);
+    contents.push_back(ConstantPointerNull::get(PointerType::get(list_type, 0)));
+
+    Constant* const_head = ConstantStruct::get(head_type, contents);
+    gvar_struct_head->setInitializer(const_head);
+
+    //gvar_struct_head->dump();
+}
+
+/**
+ *
+ * @param fname
+ * @param idx
+ * @param call
+ * @param head_type
+ * @param list_ptr_type
+ */
+static void process_lowfat_malloc(string fname, int idx, CallInst *call, StructType * head_type, StructType * list_type){
+
+    std::string name = "LOWFAT_GLOBAL_" + fname + "_" + std::to_string(idx);;
+
+    StringRef global_name = StringRef(name);
+
+    //llvm::errs()<<"GLOBAL_NAME: "<<global_name<<"\n";
+
+    // new global value for the malloc
+    IRBuilder<> builder(call);
+
+    //M->getOrInsertGlobal(global_name, head_type);
+    Module* M = call->getModule();
+    GlobalVariable *gvar_struct_head = new GlobalVariable(*M, head_type, false, GlobalValue::ExternalLinkage, 0, global_name);
+    gvar_struct_head->setAlignment(8);
+
+    initializeGlobalHead(M, gvar_struct_head, head_type, list_type);
+
+    Function *symbolize_malloc_func = M->getFunction("lowfat_malloc_symbolize");
+    if(symbolize_malloc_func == nullptr){
+
+        std::vector<Type*> vec;
+        vec.push_back(IntegerType::get(M->getContext(), 64));
+        vec.push_back(PointerType::get(head_type, 0));
+
+        FunctionType* func_type = FunctionType::get(
+                PointerType::get(IntegerType::get(M->getContext(), 8), 0),
+                vec,
+                false);
+
+        symbolize_malloc_func = Function::Create(func_type, GlobalValue::ExternalLinkage, "lowfat_malloc_symbolize", M);
+        symbolize_malloc_func->setCallingConv(CallingConv::C);
+    }
+
+    Value* size_param = call->getArgOperand(0);
+
+    Value *symbolize_call = builder.CreateCall(symbolize_malloc_func, {size_param, gvar_struct_head});
+
+    call->replaceAllUsesWith(symbolize_call);
+}
+
+/**
+ * Processing Symbolize
+ */
+static void symbolize(Module *M){
+
+    std::vector<StructType *> types = M->getIdentifiedStructTypes();
+
+    StructType* head_type = nullptr;
+    StructType* list_type = nullptr;
+    for(auto &StructTy: types){
+
+        if(StructTy->getName().str() == "struct.malloc_linked_list"){
+            list_type = StructTy;
+        }else if(StructTy->getName().str() == "struct.malloc_linked_list_head"){
+            head_type = StructTy;
+        }
+    }
+    if(head_type == nullptr){
+        head_type = StructType::create(M->getContext(), "struct.malloc_linked_list_head");
+        std::vector<Type*> vec_list_head;
+        vec_list_head.push_back(IntegerType::get(M->getContext(), sizeof(int)));
+        vec_list_head.push_back(PointerType::get(IntegerType::get(M->getContext(), sizeof(char)), 0));
+
+        if(list_type == nullptr){
+            list_type  = StructType::create(M->getContext(), "struct.malloc_linked_list");
+            std::vector<Type*> vec_list_type;
+            vec_list_type.push_back(IntegerType::get(M->getContext(), sizeof(int)));
+            vec_list_type.push_back(PointerType::get(list_type, 0));
+            if (list_type->isOpaque()) {
+                list_type->setBody(vec_list_type, false);
+            }
+        }
+        vec_list_head.push_back(list_type);
+        if (head_type->isOpaque()) {
+            head_type->setBody(vec_list_head, false);
+        }
+    }
+
+    // convert to pointer
+    //PointerType* head_ptr_type = PointerType::get(head_type, 0);
+    //PointerType* list_ptr_type = PointerType::get(list_type, 0);
+
+    for(auto &F: *M){
+        if (F.isDeclaration())
+            continue;
+
+        string fname = F.getName().str();
+
+        int idx = 0;
+
+        for (auto &BB: F){
+            for (auto &I: BB){
+                if(CallInst *call = dyn_cast<CallInst>(&I)){
+                    Function *F = call->getCalledFunction();
+                    if (!F->hasName()){
+                        continue;
+                    }
+                    const string &Name = F->getName().str();
+                    // pick out lowfat_malloc
+                    if(Name == "lowfat_malloc"){
+                        process_lowfat_malloc(fname, idx, call, head_type, list_type);
+                    }
+                }
+            }
+        }
+
+    }
+
+}// end static void symbolize(Module *M)
+
+
 /*
  * LowFat LLVM Pass
  */
@@ -1773,6 +1937,11 @@ struct LowFat : public ModulePass
                     optimizeMalloc(&M, &I, dels);
             for (auto &I: dels)
                 I->eraseFromParent();
+        }
+
+        // added by wb
+        if(option_symbolize){
+            symbolize(&M);
         }
 
         if (option_debug)

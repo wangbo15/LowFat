@@ -21,6 +21,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "lowfat_ds.h"
+
 #ifdef __cplusplus 
 extern "C"
 {
@@ -159,6 +161,13 @@ extern void lowfat_oob_check(unsigned _info, const void *_ptr, size_t _size,
  * Safe replacement malloc().
  */
 extern _LOWFAT_MALLOC void *lowfat_malloc(size_t _size);
+
+
+/*
+ * add by wb, symbolize
+ */
+extern _LOWFAT_MALLOC void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head);
+
 
 /*
  * Safe replacement free().

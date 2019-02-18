@@ -110,8 +110,62 @@ extern void *lowfat_malloc_index(size_t idx, size_t size);
 extern void *lowfat_malloc(size_t size)
 {
     size_t idx = lowfat_heap_select(size);
-    return lowfat_malloc_index(idx, size);
+
+    static bool disable = false;
+    if (disable)
+        return __libc_malloc(size);
+
+    void* res = lowfat_malloc_index(idx, size);
+    disable = true;
+
+    //printf("\n\n>>>>>>> %p -> %u\n\n", res, size);
+
+    disable = false;
+
+	return res;
 }
+
+#include "lowfat_ds.h"
+/**
+ *
+ * @param size
+ * @param global_head
+ * @return
+ */
+extern void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head)
+{
+    static bool disable = false;
+    if (disable)
+        return __libc_malloc(size);
+
+    void* result = lowfat_malloc(size);
+
+    disable = true;
+
+    (global_head->time)++;
+
+    MALLOC_LIST* item = malloc(sizeof(MALLOC_LIST));
+    item->size = size;
+    if(global_head->next == NULL){
+        global_head->next = item;
+    }else{
+        MALLOC_LIST* tmp = global_head->next;
+        global_head->next = item;
+        item->next = tmp;
+    }
+
+    MALLOC_LIST* curr = global_head->next;
+    while(curr != NULL)	{
+        printf("DUMP >>>> %s ---->>>> %d\n", global_head->name, curr->size);
+        curr = curr->next;
+    }
+
+    disable = false;
+
+    return result;
+}
+
+
 extern void *lowfat_malloc_index(size_t idx, size_t size)
 {
 #ifdef LOWFAT_STANDALONE
@@ -298,20 +352,19 @@ extern void *lowfat_realloc(void *ptr, size_t size)
     // (1) Check for cheap exits:
     if (ptr == NULL || size == 0)
         return lowfat_malloc(size);
-    if (lowfat_is_ptr(ptr) &&
-        lowfat_index(ptr) == lowfat_heap_select(size))
-    {
+    if (lowfat_index(ptr) == lowfat_heap_select(size)) {
+        if (lowfat_is_ptr(ptr)) {
 #ifndef LOWFAT_NO_PROTECT
-        // `ptr' and `size' map to the same region; allocation can be avoided.
-        size_t alloc_size = LOWFAT_SIZES[lowfat_index(ptr)];
-        if (alloc_size >= LOWFAT_BIG_OBJECT)
-        {
-            void *prot_ptr = LOWFAT_PAGES_BASE(ptr);
-            size_t prot_size = LOWFAT_PAGES_SIZE(ptr, alloc_size);
-            lowfat_protect(prot_ptr, prot_size, true, true);
-        }
+            // `ptr' and `size' map to the same region; allocation can be avoided.
+            size_t alloc_size = LOWFAT_SIZES[lowfat_index(ptr)];
+            if (alloc_size >= LOWFAT_BIG_OBJECT) {
+                void *prot_ptr = LOWFAT_PAGES_BASE(ptr);
+                size_t prot_size = LOWFAT_PAGES_SIZE(ptr, alloc_size);
+                lowfat_protect(prot_ptr, prot_size, true, true);
+            }
 #endif      /* LOWFAT_NO_PROTECT */
-        return ptr;
+            return ptr;
+        }
     }
     if (!lowfat_is_ptr(ptr))
         return lowfat_fallback_realloc(ptr, size);

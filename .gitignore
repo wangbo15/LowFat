@@ -4,6 +4,7 @@ release/
 bootstrap/
 config/
 
+.idea/
 llvm-4.0.0.src/.idea/
 llvm-4.0.0.src/cmake-build-debug/
 test.log

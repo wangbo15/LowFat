@@ -14,5 +14,8 @@ test.log
 
 test/*.ll
 test/a.out
+test/*.o
+test/*.a
+test/*.so
 
 llvm-4.0.0.src/projects/compiler-rt/lib/lowfat/CMakeLists.txt

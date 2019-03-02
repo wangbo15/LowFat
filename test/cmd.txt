@@ -1,0 +1,3 @@
+../build/bin/clang -emit-llvm -S -g -fsanitize=lowfat -mllvm -lowfat-debug -mllvm -lowfat-symbolize global.c
+
+../build/bin/clang -emit-llvm -S -g -fsanitize=lowfat -mllvm -lowfat-debug global.c

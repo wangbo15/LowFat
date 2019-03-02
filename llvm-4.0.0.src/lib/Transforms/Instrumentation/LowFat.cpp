@@ -51,6 +51,20 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Constants.h"
 
+
+#include "llvm/IR/Metadata.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/IR/ConstantRange.h"
+#include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/ValueHandle.h"
+
+
 extern "C"
 {
 #include "lowfat_config.inc"
@@ -1073,6 +1087,7 @@ static void insertBoundsCheck(const DataLayout *DL, Instruction *I, Value *Ptr,
  * Replace unsafe library functions.
  */
 #include <malloc.h>
+
 #define STRING(a)   STRING2(a)
 #define STRING2(a)  #a
 #define REPLACE2(M, N, alloc)                                           \
@@ -1679,12 +1694,12 @@ static bool isBlacklisted(SpecialCaseList *SCL, Function *F)
 }
 
 
-static void initializeGlobalHead(Module* M, GlobalVariable *gvar_struct_head, StructType * head_type, StructType * list_type){
+static void initializeGlobalHead(Module* M, GlobalVariable *gvar_struct_head, string val_name, StructType * head_type, StructType * list_type){
 
-    Constant *name = ConstantDataArray::getString(M->getContext(), gvar_struct_head->getName(), true);
+    Constant *name = ConstantDataArray::getString(M->getContext(), val_name, true);
 
     // plus one for \0
-    size_t len = gvar_struct_head->getName().size() + 1;
+    size_t len = val_name.length() + 1;
 
     Type* arr_type = ArrayType::get(IntegerType::get(M->getContext(), 8), len);
     GlobalVariable* gvar_name = new GlobalVariable(*M,
@@ -1714,6 +1729,65 @@ static void initializeGlobalHead(Module* M, GlobalVariable *gvar_struct_head, St
     //gvar_struct_head->dump();
 }
 
+static string get_value_name(int func_size, Value *param, std::map<Value *, string> &valueNameMap){
+    int i = 0;
+    llvm::errs()<<"\nBEGIN >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n";
+    errs()<<param<<"\n";
+
+    while(i < func_size){
+        i++;
+
+        //param->dump();
+
+        if(valueNameMap.count(param)){
+
+            param->dump();
+            errs()<<" === > "<<valueNameMap[param]<<"\n";
+            return valueNameMap[param];
+
+        } else {
+
+            if(BitCastInst* bc = dyn_cast<BitCastInst>(param)){
+                param = bc->getOperand(0);
+                continue;
+            }
+        }
+    }
+    llvm::errs()<<"END >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n";
+
+    static int counter = 0;
+
+    string tmp_name = "TMP_" + std::to_string(counter);
+    counter++;
+    return tmp_name;
+}
+
+static std::map<Value*, string> collect_local_variable_metadata(Function& F){
+    std::map<Value*, string> valueNameMap;
+
+    for (auto &BB: F){
+        for (auto &I: BB){
+            if(DbgValueInst *llvm_dbg_value = dyn_cast<DbgValueInst>(&I)){
+                if(MetadataAsValue* val = dyn_cast_or_null<MetadataAsValue>(llvm_dbg_value->getOperand(0))){
+                    if(ValueAsMetadata* valueAsMetadata = dyn_cast<ValueAsMetadata>(val->getMetadata())){
+
+                        valueAsMetadata->getValue()->dump();
+
+                        errs()<<" ------ "<<llvm_dbg_value->getVariable()->getRawName()->getString()<<"\n";
+
+                        Value* key = valueAsMetadata->getValue();
+                        if(key != nullptr){
+                            valueNameMap[key] = llvm_dbg_value->getVariable()->getRawName()->getString();
+                        }
+                    }
+                }
+            }
+        }// end for(I)
+    }// end for(BB)
+
+    return valueNameMap;
+}
+
 /**
  *
  * @param fname
@@ -1722,11 +1796,14 @@ static void initializeGlobalHead(Module* M, GlobalVariable *gvar_struct_head, St
  * @param head_type
  * @param list_ptr_type
  */
-static void process_lowfat_malloc(string fname, int idx, CallInst *call, StructType * head_type, StructType * list_type){
+static void process_lowfat_malloc(string glo_name,
+        string val_name,
+        CallInst *call,
+        StructType * head_type,
+        StructType * list_type,
+        vector<Instruction *> &dels){
 
-    std::string name = "LOWFAT_GLOBAL_" + fname + "_" + std::to_string(idx);;
-
-    StringRef global_name = StringRef(name);
+    StringRef global_name = StringRef(glo_name);
 
     //llvm::errs()<<"GLOBAL_NAME: "<<global_name<<"\n";
 
@@ -1738,7 +1815,7 @@ static void process_lowfat_malloc(string fname, int idx, CallInst *call, StructT
     GlobalVariable *gvar_struct_head = new GlobalVariable(*M, head_type, false, GlobalValue::ExternalLinkage, 0, global_name);
     gvar_struct_head->setAlignment(8);
 
-    initializeGlobalHead(M, gvar_struct_head, head_type, list_type);
+    initializeGlobalHead(M, gvar_struct_head, val_name, head_type, list_type);
 
     Function *symbolize_malloc_func = M->getFunction("lowfat_malloc_symbolize");
     if(symbolize_malloc_func == nullptr){
@@ -1761,13 +1838,11 @@ static void process_lowfat_malloc(string fname, int idx, CallInst *call, StructT
     Value *symbolize_call = builder.CreateCall(symbolize_malloc_func, {size_param, gvar_struct_head});
 
     call->replaceAllUsesWith(symbolize_call);
+    dels.push_back(call);
 }
 
-/**
- * Processing Symbolize
- */
-static void symbolize(Module *M){
 
+static std::pair<StructType*, StructType*> declear_global_types(Module* M){
     std::vector<StructType *> types = M->getIdentifiedStructTypes();
 
     StructType* head_type = nullptr;
@@ -1801,20 +1876,43 @@ static void symbolize(Module *M){
         }
     }
 
-    // convert to pointer
-    //PointerType* head_ptr_type = PointerType::get(head_type, 0);
-    //PointerType* list_ptr_type = PointerType::get(list_type, 0);
+    pair <StructType*, StructType*> result;
+    result.first = head_type;
+    result.second = list_type;
+    return result;
+}
 
+/**
+ * Processing Symbolize
+ */
+static void symbolize(Module *M){
+
+    std::pair<StructType*, StructType*> struct_types = declear_global_types(M);
+
+    StructType* head_type = struct_types.first;
+    StructType* list_type = struct_types.second;
+
+    vector<Instruction *> dels;
     for(auto &F: *M){
         if (F.isDeclaration())
             continue;
 
-        string fname = F.getName().str();
+        // map[varibale] = metadata
+        std::map<Value*, string> valueNameMap = collect_local_variable_metadata(F);
 
+        string fname = F.getName().str();
         int idx = 0;
+
+        int instCount = 0;
+        for (BasicBlock& BB : F) {
+            instCount += std::distance(BB.begin(), BB.end());
+        }
 
         for (auto &BB: F){
             for (auto &I: BB){
+                errs()<<"\n\n  ======== "<<&I<<"\n";
+                I.dump();
+
                 if(CallInst *call = dyn_cast<CallInst>(&I)){
                     Function *F = call->getCalledFunction();
                     if (!F->hasName()){
@@ -1823,12 +1921,35 @@ static void symbolize(Module *M){
                     const string &Name = F->getName().str();
                     // pick out lowfat_malloc
                     if(Name == "lowfat_malloc"){
-                        process_lowfat_malloc(fname, idx, call, head_type, list_type);
+                        Value* length_var = call->getArgOperand(0);
+
+                        string global_name = "LOWFAT_GLOBAL_" + fname + "_" + std::to_string(idx);
+
+                        if(Constant* constant = dyn_cast<Constant>(length_var)){
+                            // allocate memory constantly
+
+                        }else if(GlobalValue* global =  dyn_cast<GlobalValue>(length_var)){
+                            // allocate memory via a global
+
+                        }else{
+                            // allocate by local
+                            string value_name = get_value_name(instCount, length_var, valueNameMap);
+
+                            // TODO
+                            process_lowfat_malloc(global_name, value_name, call, head_type, list_type, dels);
+                        }
+
+
+
                     }
                 }
             }
         }
 
+    }
+
+    for(auto &I: dels){
+        I->eraseFromParent();
     }
 
 }// end static void symbolize(Module *M)

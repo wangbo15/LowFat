@@ -100,10 +100,16 @@ build_llvm()
             -DLOWFAT_NO_REPLACE_STD_MALLOC -fPIC -shared \
             -o liblowfat.so -std=gnu99 -m64 "-I$PWD/${RUNTIME_PATH}/" \
             -DLOWFAT_LINUX -O2 $STANDALONE_OPTS "$PWD/${RUNTIME_PATH}/lowfat.c"
+
+
+        echo -e "${GREEN}$0${OFF}: creating libstlimpl.so for stl interface..."
+		$CLANGXX "$PWD/${RUNTIME_PATH}/stlimpl.cpp" -shared -fPIC -o libstlimpl.so
+
         echo -e "${GREEN}$0${OFF}: creating lowfat.o standalone..."
         $CLANG -D_GNU_SOURCE -DLOWFAT_STANDALONE \
             -DLOWFAT_NO_REPLACE_STD_MALLOC -c -fPIC \
             -o lowfat.o -std=gnu99 -m64 "-I$PWD/${RUNTIME_PATH}/" \
+			-lstlimpl \
             -DLOWFAT_LINUX -O2 $STANDALONE_OPTS "$PWD/${RUNTIME_PATH}/lowfat.c"
     fi
 

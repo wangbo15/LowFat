@@ -473,6 +473,25 @@ extern LOWFAT_NORETURN void lowfat_oob_error(unsigned info,
     ssize_t overflow = (ssize_t)ptr - (ssize_t)baseptr;
     if (overflow > 0)
         overflow -= lowfat_size(baseptr);
+
+    // add by wb
+    fprintf(stderr, "ACCESSING baseptr: %p\n", baseptr);
+
+    size_t value = map_get(GLB_PTR_MAP, baseptr);
+
+    if(value == NULL){
+        fprintf(stderr, "MAP_MISSING, SIZE: %d\n", map_size(GLB_PTR_MAP));
+    }
+
+    MALLOC_LIST_HEAD* global_head = (MALLOC_LIST_HEAD*) value;
+    if(global_head == NULL){
+        fprintf(stderr, "ERROR !!!!!!!!!!!!!!!!!!!!!\n");
+    }else{
+        fprintf(stderr, ">>>>>>> %s\n", global_head->name);
+    }
+
+    // end added by wb
+
     lowfat_error(
         "out-of-bounds error detected!\n"
         "\toperation = %s\n"
@@ -505,11 +524,16 @@ extern void lowfat_oob_warning(unsigned info,
 extern void lowfat_oob_check(unsigned info, const void *ptr, size_t size0,
     const void *baseptr)
 {
+
+    fprintf(stdout, "WHY 1 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+
     size_t size = lowfat_size(baseptr);
     size_t diff = (size_t)((const uint8_t *)ptr - (const uint8_t *)baseptr);
     size -= size0;
-    if (diff >= size)
+
+    if (diff >= size){
         lowfat_oob_error(info, ptr, baseptr);
+    }
 }
 
 #if !defined(LOWFAT_DATA_ONLY) && !defined(LOWFAT_STANDALONE) && \

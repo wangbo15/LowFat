@@ -2,8 +2,9 @@
 #include <stdlib.h>
 #include "lowfat_ds.h"
 
+//int g_time = 0;
 
-MALLOC_LIST_HEAD* head = NULL;
+
 
 int main(int argc, char **argv)
 {
@@ -24,6 +25,20 @@ int main(int argc, char **argv)
     buf[i] = '\0';
     printf("String = \"%s\"\n", buf);
 
-
     return 0;
 }
+
+/*
+void foo(unsigned long a, unsigned long b){
+	
+	unsigned long size = a + b;
+	
+	size++;	
+
+	char *buf = (char *)malloc(size);
+
+	//unsigned long x = 123;
+	//buf = (char *)malloc(x);
+}*/
+
+

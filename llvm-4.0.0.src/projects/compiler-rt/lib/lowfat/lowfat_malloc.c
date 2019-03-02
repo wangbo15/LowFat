@@ -107,6 +107,7 @@ extern bool lowfat_malloc_init(void)
  * LOWFAT malloc()
  */
 extern void *lowfat_malloc_index(size_t idx, size_t size);
+
 extern void *lowfat_malloc(size_t size)
 {
     size_t idx = lowfat_heap_select(size);
@@ -118,7 +119,7 @@ extern void *lowfat_malloc(size_t size)
     void* res = lowfat_malloc_index(idx, size);
     disable = true;
 
-    //printf("\n\n>>>>>>> %p -> %u\n\n", res, size);
+    printf("\nLOWFAT_MALLOC >>>>>>> %p -> %zu\n", res, size);
 
     disable = false;
 
@@ -126,6 +127,11 @@ extern void *lowfat_malloc(size_t size)
 }
 
 #include "lowfat_ds.h"
+#include "stl_interface.h"
+
+
+any_t GLB_PTR_MAP = NULL;
+
 /**
  *
  * @param size
@@ -142,6 +148,8 @@ extern void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head)
 
     disable = true;
 
+    printf("AFTER LOWFAT_MALLOC: %p\n", result);
+
     (global_head->time)++;
 
     MALLOC_LIST* item = malloc(sizeof(MALLOC_LIST));
@@ -156,9 +164,22 @@ extern void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head)
 
     MALLOC_LIST* curr = global_head->next;
     while(curr != NULL)	{
-        printf("DUMP >>>> %s ---->>>> %d\n", global_head->name, curr->size);
+        printf("DUMP HEAD >>>> %s ---->>>> %d\n", global_head->name, curr->size);
         curr = curr->next;
     }
+
+    // add to map of 'address->global'
+    printf("ADD TO MAP >>>> KEY: %p -->> VAL: %p\n", result, (any_t) global_head);
+
+    //TODO: add lock
+    //lowfat_mutex_t mutex;
+
+    if(GLB_PTR_MAP == NULL){
+        GLB_PTR_MAP = map_create();
+    }
+
+    // add item: result_address -> global_head_address
+    map_put(GLB_PTR_MAP, (size_t) result, (size_t) global_head);
 
     disable = false;
 
@@ -545,4 +566,3 @@ extern size_t malloc_usable_size(void *ptr)
     return libc_malloc_usable_size(ptr);
 }
 #endif
-

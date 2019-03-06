@@ -119,7 +119,7 @@ extern void *lowfat_malloc(size_t size)
     void* res = lowfat_malloc_index(idx, size);
     disable = true;
 
-    printf("\nLOWFAT_MALLOC >>>>>>> %p -> %zu\n", res, size);
+    printf("\nLOWFAT_MALLOC >>>>>>> %p, size: %zu -> %zu\n", res, size, lowfat_size(res));
 
     disable = false;
 
@@ -131,6 +131,37 @@ extern void *lowfat_malloc(size_t size)
 
 
 any_t GLB_PTR_MAP = NULL;
+
+
+extern void lowfat_insert_map(size_t size, void* result, MALLOC_LIST_HEAD* global_head){
+    (global_head->time)++;
+
+    MALLOC_LIST* item = __libc_malloc(sizeof(MALLOC_LIST));
+    item->size = size;
+    if(global_head->next == NULL){
+        global_head->next = item;
+    }else{
+        MALLOC_LIST* tmp = global_head->next;
+        global_head->next = item;
+        item->next = tmp;
+    }
+
+    MALLOC_LIST* curr = global_head->next;
+    while(curr != NULL)	{
+        //printf("DUMP HEAD >>>> %s ---->>>> %d\n", global_head->name, curr->size);
+        curr = curr->next;
+    }
+
+    //TODO: add lock
+    //lowfat_mutex_t mutex;
+
+    if(GLB_PTR_MAP == NULL){
+        GLB_PTR_MAP = map_create();
+    }
+
+    // add item: result_address -> global_head_address
+    map_put(GLB_PTR_MAP, (size_t) result, (size_t) global_head);
+}
 
 /**
  *
@@ -150,36 +181,9 @@ extern void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head)
 
     printf("AFTER LOWFAT_MALLOC: %p\n", result);
 
-    (global_head->time)++;
+    lowfat_insert_map(size, result, global_head);
 
-    MALLOC_LIST* item = malloc(sizeof(MALLOC_LIST));
-    item->size = size;
-    if(global_head->next == NULL){
-        global_head->next = item;
-    }else{
-        MALLOC_LIST* tmp = global_head->next;
-        global_head->next = item;
-        item->next = tmp;
-    }
-
-    MALLOC_LIST* curr = global_head->next;
-    while(curr != NULL)	{
-        printf("DUMP HEAD >>>> %s ---->>>> %d\n", global_head->name, curr->size);
-        curr = curr->next;
-    }
-
-    // add to map of 'address->global'
     printf("ADD TO MAP >>>> KEY: %p -->> VAL: %p\n", result, (any_t) global_head);
-
-    //TODO: add lock
-    //lowfat_mutex_t mutex;
-
-    if(GLB_PTR_MAP == NULL){
-        GLB_PTR_MAP = map_create();
-    }
-
-    // add item: result_address -> global_head_address
-    map_put(GLB_PTR_MAP, (size_t) result, (size_t) global_head);
 
     disable = false;
 

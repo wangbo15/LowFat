@@ -477,16 +477,12 @@ extern LOWFAT_NORETURN void lowfat_oob_error(unsigned info,
     // add by wb
     fprintf(stderr, "ACCESSING baseptr: %p\n", baseptr);
 
-    size_t value = map_get(GLB_PTR_MAP, baseptr);
+    size_t value = map_get(GLB_PTR_MAP, (size_t) baseptr);
 
-    if(value == NULL){
+    if(value == 0x0){
         fprintf(stderr, "MAP_MISSING, SIZE: %d\n", map_size(GLB_PTR_MAP));
-    }
-
-    MALLOC_LIST_HEAD* global_head = (MALLOC_LIST_HEAD*) value;
-    if(global_head == NULL){
-        fprintf(stderr, "ERROR !!!!!!!!!!!!!!!!!!!!!\n");
-    }else{
+    } else{
+        MALLOC_LIST_HEAD* global_head = (MALLOC_LIST_HEAD*) value;
         fprintf(stderr, ">>>>>>> %s\n", global_head->name);
     }
 
@@ -525,7 +521,7 @@ extern void lowfat_oob_check(unsigned info, const void *ptr, size_t size0,
     const void *baseptr)
 {
 
-    fprintf(stdout, "WHY 1 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+    fprintf(stdout, "Will never be called !\n");
 
     size_t size = lowfat_size(baseptr);
     size_t diff = (size_t)((const uint8_t *)ptr - (const uint8_t *)baseptr);

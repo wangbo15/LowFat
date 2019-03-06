@@ -166,6 +166,8 @@ extern _LOWFAT_MALLOC void *lowfat_malloc(size_t _size);
 /*
  * add by wb, symbolize
  */
+extern void lowfat_insert_map(size_t size, void* result, MALLOC_LIST_HEAD* global_head);
+
 extern _LOWFAT_MALLOC void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head);
 
 

@@ -1341,6 +1341,9 @@ static void addLowFatFuncs(Module *M)
  */
 static bool doesAllocaEscape(Value *Val, set<Value *> &seen)
 {
+    // add wb, for debug
+    return true;
+
     if (seen.find(Val) != seen.end())
         return false;
     seen.insert(Val);
@@ -1423,8 +1426,10 @@ static bool isInterestingAlloca(Instruction *I)
     if (Alloca == nullptr)
         return false;
     set<Value *> seen;
-    if (doesAllocaEscape(Alloca, seen))
+    if (doesAllocaEscape(Alloca, seen)){
         return true;
+    }
+
     return false;
 }
 
@@ -1503,6 +1508,11 @@ static void makeGlobalVariableLowFatPtr(Module *M, GlobalVariable *GV)
     GV->setSection(section);
 }
 
+static pair<StructType*, StructType*> declear_global_types(Module* M);
+static string get_value_name(Function* F, Value *param, map<Value *, string> &valueNameMap);
+static map<Value*, string> collect_local_variable_metadata(Function& F);
+static void initializeGlobalHead(Module* M, GlobalVariable *gvar_struct_head, string val_name, StructType * head_type, StructType * list_type);
+
 /*
  * Convert an alloca instruction into a low-fat-pointer.  This is a more
  * complicated transformation described in the paper:
@@ -1526,7 +1536,9 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
     Value *CastAlloca = nullptr;
     Value *LifetimeSize = nullptr;
     bool delAlloca = false;
-    if (ISize != nullptr)
+
+    bool fix_len = (ISize != nullptr);
+    if (fix_len)
     {
         // Simple+common case: fixed sized alloca:
         size_t size = DL->getTypeAllocSize(Ty) * ISize->getZExtValue();
@@ -1630,6 +1642,49 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
     NoReplace2 = MirroredPtr;
     Value *Ptr = builder.CreateBitCast(MirroredPtr, Alloca->getType());
 
+    /********* add by wb **************/
+    if(!fix_len){
+
+        std::pair<StructType*, StructType*> struct_types = declear_global_types(M);
+        StructType* head_type = struct_types.first;
+        StructType* list_type = struct_types.second;
+
+        std::map<Value*, string> valueNameMap = collect_local_variable_metadata(*F);
+        string val_name = get_value_name(F, Alloca, valueNameMap);
+
+        // global name
+        static int global_counter = 0;
+        string global_name = "LOWFAT_STACK_GLOBAL_" + F->getName().str() + "_" + std::to_string(global_counter);
+        global_counter++;
+
+        // insert global
+        GlobalVariable *gvar_struct_head = new GlobalVariable(*M, head_type, false, GlobalValue::ExternalLinkage, 0, global_name);
+        gvar_struct_head->setAlignment(8);
+        initializeGlobalHead(M, gvar_struct_head, val_name, head_type, list_type);
+
+        Function* insert_map_func = M->getFunction("lowfat_insert_map");
+        if (!insert_map_func) {
+            //void lowfat_insert_map(size_t size, void* result, MALLOC_LIST_HEAD* global_head)
+            std::vector<Type*> params;
+            params.push_back(IntegerType::get(M->getContext(), 64));
+            params.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+            params.push_back(PointerType::get(head_type, 0));
+            FunctionType* func_tp = FunctionType::get(
+                    Type::getVoidTy(M->getContext()),
+                    params,
+                    false);
+
+
+            insert_map_func = Function::Create(func_tp, GlobalValue::ExternalLinkage, "lowfat_insert_map", M);
+            insert_map_func->setCallingConv(CallingConv::C);
+        }
+
+        Value *insert_call = builder.CreateCall(insert_map_func, {Size, MirroredPtr, gvar_struct_head});
+
+    }// end if(is_variable)
+    /************ added by wb end *************/
+
+
     // Replace all uses of `Alloca' with the (now low-fat) `Ptr'.
     // We do not replace lifetime intrinsics nor values used in the
     // construction of the low-fat pointer (NoReplace1, ...).
@@ -1729,26 +1784,44 @@ static void initializeGlobalHead(Module* M, GlobalVariable *gvar_struct_head, st
     //gvar_struct_head->dump();
 }
 
-static string get_value_name(int func_size, Value *param, std::map<Value *, string> &valueNameMap){
-    int i = 0;
-    llvm::errs()<<"\nBEGIN >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n";
-    errs()<<param<<"\n";
+static string get_value_name(Function* F, Value *param, map<Value *, string> &valueNameMap){
 
-    while(i < func_size){
+    int instCount = 0;
+    for (BasicBlock& BB : *F) {
+        instCount += std::distance(BB.begin(), BB.end());
+    }
+
+    int i = 0;
+
+    param->dump();
+
+    llvm::errs()<<"\nBEGIN get_value_name >>>>> "<< F->getName() <<" >>>>>>>>>>>>>>>>>>>>>>>>>\n";
+    //errs()<<param<<"\n";
+
+    while(i < instCount){
         i++;
 
         //param->dump();
 
         if(valueNameMap.count(param)){
 
-            param->dump();
+            //param->dump();
             errs()<<" === > "<<valueNameMap[param]<<"\n";
+
+//            std::string type_str;
+//            llvm::raw_string_ostream rso(type_str);
+//            param->getType()->print(rso);
+
             return valueNameMap[param];
 
         } else {
 
             if(BitCastInst* bc = dyn_cast<BitCastInst>(param)){
-                param = bc->getOperand(0);
+                param = dyn_cast<Instruction>(bc->getOperand(0));
+                continue;
+            }
+            if(AllocaInst* al = dyn_cast<AllocaInst>(param)){
+                param = al->getArraySize();
                 continue;
             }
         }
@@ -1757,7 +1830,7 @@ static string get_value_name(int func_size, Value *param, std::map<Value *, stri
 
     static int counter = 0;
 
-    string tmp_name = "TMP_" + std::to_string(counter);
+    string tmp_name = "tmp_" + F->getName().str() + "_" + std::to_string(counter);
     counter++;
     return tmp_name;
 }
@@ -1773,7 +1846,7 @@ static std::map<Value*, string> collect_local_variable_metadata(Function& F){
 
                         valueAsMetadata->getValue()->dump();
 
-                        errs()<<" ------ "<<llvm_dbg_value->getVariable()->getRawName()->getString()<<"\n";
+                        errs()<<"DUMPING META-INFO: "<<llvm_dbg_value->getVariable()->getRawName()->getString()<<"\n";
 
                         Value* key = valueAsMetadata->getValue();
                         if(key != nullptr){
@@ -1810,7 +1883,6 @@ static void process_lowfat_malloc(string glo_name,
     // new global value for the malloc
     IRBuilder<> builder(call);
 
-    //M->getOrInsertGlobal(global_name, head_type);
     Module* M = call->getModule();
     GlobalVariable *gvar_struct_head = new GlobalVariable(*M, head_type, false, GlobalValue::ExternalLinkage, 0, global_name);
     gvar_struct_head->setAlignment(8);
@@ -1843,6 +1915,7 @@ static void process_lowfat_malloc(string glo_name,
 
 
 static std::pair<StructType*, StructType*> declear_global_types(Module* M){
+
     std::vector<StructType *> types = M->getIdentifiedStructTypes();
 
     StructType* head_type = nullptr;
@@ -1903,15 +1976,10 @@ static void symbolize(Module *M){
         string fname = F.getName().str();
         int idx = 0;
 
-        int instCount = 0;
-        for (BasicBlock& BB : F) {
-            instCount += std::distance(BB.begin(), BB.end());
-        }
-
         for (auto &BB: F){
             for (auto &I: BB){
-                errs()<<"\n\n  ======== "<<&I<<"\n";
-                I.dump();
+                //errs()<<"\n\n  ======== "<<&I<<"\n";
+                //I.dump();
 
                 if(CallInst *call = dyn_cast<CallInst>(&I)){
                     Function *F = call->getCalledFunction();
@@ -1921,9 +1989,9 @@ static void symbolize(Module *M){
                     const string &Name = F->getName().str();
                     // pick out lowfat_malloc
                     if(Name == "lowfat_malloc"){
-                        Value* length_var = call->getArgOperand(0);
+                        Instruction* length_var = dyn_cast<Instruction>(call->getArgOperand(0));
 
-                        string global_name = "LOWFAT_GLOBAL_" + fname + "_" + std::to_string(idx);
+                        string global_name = "LOWFAT_MALLOC_GLOBAL_" + fname + "_" + std::to_string(idx);
 
                         if(Constant* constant = dyn_cast<Constant>(length_var)){
                             // allocate memory constantly
@@ -1933,7 +2001,7 @@ static void symbolize(Module *M){
 
                         }else{
                             // allocate by local
-                            string value_name = get_value_name(instCount, length_var, valueNameMap);
+                            string value_name = get_value_name(F, length_var, valueNameMap);
 
                             // TODO
                             process_lowfat_malloc(global_name, value_name, call, head_type, list_type, dels);
@@ -1988,6 +2056,7 @@ struct LowFat : public ModulePass
         }
         if (isBlacklisted(Blacklist.get(), &M))
             return true;
+
 
         // PASS (1): Bounds instrumentation
         const TargetLibraryInfo &TLI =

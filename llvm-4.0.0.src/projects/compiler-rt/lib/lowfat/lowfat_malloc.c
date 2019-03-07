@@ -117,11 +117,12 @@ extern void *lowfat_malloc(size_t size)
         return __libc_malloc(size);
 
     void* res = lowfat_malloc_index(idx, size);
+
+    /*
     disable = true;
-
     printf("\nLOWFAT_MALLOC >>>>>>> %p, size: %zu -> %zu\n", res, size, lowfat_size(res));
-
     disable = false;
+     */
 
 	return res;
 }
@@ -133,11 +134,13 @@ extern void *lowfat_malloc(size_t size)
 any_t GLB_PTR_MAP = NULL;
 
 
-extern void lowfat_insert_map(size_t size, void* result, MALLOC_LIST_HEAD* global_head){
+extern void lowfat_insert_map(size_t acquiredSize, void* ptr, MALLOC_LIST_HEAD* global_head){
     (global_head->time)++;
 
+    // useless to maintain MALLOC_LIST
+    /*
     MALLOC_LIST* item = __libc_malloc(sizeof(MALLOC_LIST));
-    item->size = size;
+    item->size = acquiredSize;
     if(global_head->next == NULL){
         global_head->next = item;
     }else{
@@ -148,9 +151,9 @@ extern void lowfat_insert_map(size_t size, void* result, MALLOC_LIST_HEAD* globa
 
     MALLOC_LIST* curr = global_head->next;
     while(curr != NULL)	{
-        //printf("DUMP HEAD >>>> %s ---->>>> %d\n", global_head->name, curr->size);
+        printf("DUMP HEAD >>>> %s ---->>>> %d\n", global_head->name, curr->size);
         curr = curr->next;
-    }
+    }*/
 
     //TODO: add lock
     //lowfat_mutex_t mutex;
@@ -160,7 +163,7 @@ extern void lowfat_insert_map(size_t size, void* result, MALLOC_LIST_HEAD* globa
     }
 
     // add item: result_address -> global_head_address
-    map_put(GLB_PTR_MAP, (size_t) result, (size_t) global_head);
+    map_put(GLB_PTR_MAP, (size_t) ptr, (size_t) global_head);
 }
 
 /**
@@ -171,15 +174,28 @@ extern void lowfat_insert_map(size_t size, void* result, MALLOC_LIST_HEAD* globa
  */
 extern void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head)
 {
+    size_t idx = lowfat_heap_select(size);
+
     static bool disable = false;
     if (disable)
         return __libc_malloc(size);
 
-    void* result = lowfat_malloc(size);
+    void* result = lowfat_malloc_index(idx, size);
 
     disable = true;
 
-    printf("AFTER LOWFAT_MALLOC: %p\n", result);
+    printf("BASE: %p\nIDX: %zu\nAPPLY: %zu\nSIZE: %zu\n", result, idx, size, LOWFAT_SIZES[idx]);
+
+#ifdef LOWFAT_REVERSE_MEM_LAYOUT
+    //TODO: reverse
+    if(idx != 0){
+        size_t alloc_size = LOWFAT_SIZES[idx];
+        //uint8_t* metadata = (uint8_t *)result;
+        //*metadata = size;
+        result = (uint8_t *)result + (alloc_size - size);
+        printf("ADJUST PTR >>>> %p\n", result);
+    }
+#endif
 
     lowfat_insert_map(size, result, global_head);
 
@@ -218,6 +234,8 @@ extern void *lowfat_malloc_index(size_t idx, size_t size)
     lowfat_freelist_t freelist = info->freelist;
     if (freelist != NULL)
     {
+        // pop the head from freelist and return
+
         info->freelist = freelist->next;
         lowfat_mutex_unlock(&info->mutex);
 
@@ -297,6 +315,8 @@ extern void lowfat_free(void *ptr)
             "\tsize    = %zd\n",
             kind, ptr, kind, lowfat_base(ptr), lowfat_size(ptr));
     }
+
+    //TODO: check whether it can fit reversed layout
 
     // It is possible that `ptr' does not point to the object's base (for
     // memalign() type allocations).

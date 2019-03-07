@@ -548,7 +548,7 @@ static void compile(FILE *stream, FILE *hdr_stream, FILE *ld_stream,
             LOWFAT_SIZES);
         fprintf(hdr_stream, "#define _LOWFAT_MAGICS ((uint64_t *)0x%X)\n",
             LOWFAT_MAGICS);
-        fprintf(hdr_stream, "#define _LOWFAT_REGION_SIZE %zuull\n",
+        fprintf(hdr_stream, "#define _LOWFAT_REGION_SIZE %zuull\n",		/* _LOWFAT_REGION_SIZE : 0x800000000*/
             region_size);
         if (legacy)
             fprintf(hdr_stream, "#define _LOWFAT_LEGACY 1\n");

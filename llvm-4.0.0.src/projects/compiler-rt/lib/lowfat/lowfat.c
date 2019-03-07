@@ -386,6 +386,17 @@ static LOWFAT_CONST void *lowfat_region(size_t idx)
     return (void *)(idx * LOWFAT_REGION_SIZE);
 }
 
+#ifdef LOWFAT_REVERSE_MEM_LAYOUT
+extern LOWFAT_CONST void *lowfat_stack_reverse(void *ptr, size_t acquired, size_t allocated)
+{
+    size_t offset = allocated - acquired;
+
+    fprintf(stderr, "BASE: %p, OFFSET: %zu\n", ptr, offset);
+
+    return (void *)((uint8_t *)ptr + offset);
+}
+#endif
+
 extern LOWFAT_CONST void *lowfat_stack_mirror(void *ptr, ssize_t offset)
 {
     return (void *)((uint8_t *)ptr + offset);
@@ -483,7 +494,7 @@ extern LOWFAT_NORETURN void lowfat_oob_error(unsigned info,
         fprintf(stderr, "MAP_MISSING, SIZE: %d\n", map_size(GLB_PTR_MAP));
     } else{
         MALLOC_LIST_HEAD* global_head = (MALLOC_LIST_HEAD*) value;
-        fprintf(stderr, ">>>>>>> %s\n", global_head->name);
+        fprintf(stderr, "FIND NAME >>>>>>> %s\n", global_head->name);
     }
 
     // end added by wb
@@ -520,16 +531,34 @@ extern void lowfat_oob_warning(unsigned info,
 extern void lowfat_oob_check(unsigned info, const void *ptr, size_t size0,
     const void *baseptr)
 {
-
-    fprintf(stdout, "Will never be called !\n");
+    // If comment the IR built function in LowFat.cpp
+    // the function here can be invoked
+    //fprintf(stdout, "Will never be called !\n");
 
     size_t size = lowfat_size(baseptr);
-    size_t diff = (size_t)((const uint8_t *)ptr - (const uint8_t *)baseptr);
-    size -= size0;
 
+#ifndef LOWFAT_REVERSE_MEM_LAYOUT
+    size_t diff = (size_t)((const uint8_t *)ptr - (const uint8_t *)baseptr);
+#else
+    size_t diff;
+    if(lowfat_is_heap_ptr(baseptr)){
+        diff = (size_t)((const uint8_t *)ptr - (const uint8_t *) lowfat_base(baseptr));
+    } else if(lowfat_is_stack_ptr(baseptr)){
+        diff = (size_t)((const uint8_t *)ptr - (const uint8_t *) lowfat_base(baseptr));
+
+        fprintf(stderr, "STACK !!!! PTR %p -> BASE %p, %zu\n", ptr, baseptr, diff);
+
+    } else{
+        diff = (size_t)((const uint8_t *)ptr - (const uint8_t *)baseptr);
+    }
+
+#endif
+
+    size -= size0;
     if (diff >= size){
         lowfat_oob_error(info, ptr, baseptr);
     }
+
 }
 
 #if !defined(LOWFAT_DATA_ONLY) && !defined(LOWFAT_STANDALONE) && \

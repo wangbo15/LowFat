@@ -1184,6 +1184,7 @@ static void addLowFatFuncs(Module *M)
         F->addFnAttr(llvm::Attribute::AlwaysInline);
     }
 
+    /*
     F = M->getFunction("lowfat_oob_check");
     if (F != nullptr)
     {
@@ -1239,7 +1240,7 @@ static void addLowFatFuncs(Module *M)
         F->setDoesNotThrow();
         F->setLinkage(GlobalValue::InternalLinkage);
         F->addFnAttr(llvm::Attribute::AlwaysInline);
-    }
+    }*/
 
     F = M->getFunction("lowfat_stack_allocsize");
     if (F != nullptr)
@@ -1525,9 +1526,9 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
         return;
 
     const DataLayout *DL = &M->getDataLayout();
-    Value *Size = Alloca->getArraySize();
+    Value *AcquiredSize = Alloca->getArraySize();
     Type *Ty = Alloca->getAllocatedType();
-    ConstantInt *ISize = dyn_cast<ConstantInt>(Size);
+    ConstantInt *ISize = dyn_cast<ConstantInt>(AcquiredSize);
     Function *F = I->getParent()->getParent();
     auto i = nextInsertPoint(F, Alloca);
     IRBuilder<> builder(i.first, i.second);
@@ -1535,6 +1536,9 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
     Value *NoReplace1 = nullptr, *NoReplace2 = nullptr;
     Value *CastAlloca = nullptr;
     Value *LifetimeSize = nullptr;
+
+    Value *AllocatedSize = nullptr;
+
     bool delAlloca = false;
 
     bool fix_len = (ISize != nullptr);
@@ -1589,12 +1593,12 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
         delAlloca = true;
 
         // STEP (1): Get the index/offset:
-        Size = builder.CreateMul(builder.getInt64(DL->getTypeAllocSize(Ty)),
-            Size);
+        AcquiredSize = builder.CreateMul(builder.getInt64(DL->getTypeAllocSize(Ty)),
+                                         AcquiredSize);
         Constant *C = M->getOrInsertFunction("llvm.ctlz.i64",
             builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt1Ty(),
             nullptr);
-        Idx = builder.CreateCall(C, {Size, builder.getInt1(true)});
+        Idx = builder.CreateCall(C, {AcquiredSize, builder.getInt1(true)});
         if (CallInst *Call = dyn_cast<CallInst>(Idx))
             Call->setTailCall(true);
         C = M->getOrInsertFunction("lowfat_stack_offset",
@@ -1606,12 +1610,13 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
         // STEP (2): Get the actual allocation size:
         C = M->getOrInsertFunction("lowfat_stack_allocsize",
             builder.getInt64Ty(), builder.getInt64Ty(), nullptr);
-        Size = builder.CreateCall(C, {Idx});
-        if (CallInst *Call = dyn_cast<CallInst>(Size))
+
+        AllocatedSize = builder.CreateCall(C, {Idx});
+        if (CallInst *Call = dyn_cast<CallInst>(AllocatedSize))
             Call->setTailCall(true);
 
         // STEP (3): Create replacement alloca():
-        CastAlloca = builder.CreateAlloca(builder.getInt8Ty(), Size);
+        CastAlloca = builder.CreateAlloca(builder.getInt8Ty(), AllocatedSize);
         Value *SP = CastAlloca;     // SP = Stack pointer
 
         // STEP (4): Align the stack:
@@ -1636,15 +1641,28 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
 
     // STEP (3)/(6): Mirror the pointer into a low-fat region:
     Value *C = M->getOrInsertFunction("lowfat_stack_mirror",
-        builder.getInt8PtrTy(), builder.getInt8PtrTy(), builder.getInt64Ty(),
-        nullptr);
+                                      builder.getInt8PtrTy(), builder.getInt8PtrTy(), builder.getInt64Ty(),
+                                      nullptr);
     Value *MirroredPtr = builder.CreateCall(C, {AllocedPtr, Offset});
+
+#define LOWFAT_REVERSE_MEM_LAYOUT
+#ifndef LOWFAT_REVERSE_MEM_LAYOUT
     NoReplace2 = MirroredPtr;
     Value *Ptr = builder.CreateBitCast(MirroredPtr, Alloca->getType());
+#else
+    Value *reveredFunc = M->getOrInsertFunction("lowfat_stack_reverse",
+                                      builder.getInt8PtrTy(), builder.getInt8PtrTy(), builder.getInt64Ty(), builder.getInt64Ty(),
+                                      nullptr);
 
+    Value *reversedPtr = builder.CreateCall(reveredFunc, {MirroredPtr, AcquiredSize, AllocatedSize});
+
+    MirroredPtr = reversedPtr; // set mirrored to reversed
+
+    NoReplace2 = MirroredPtr;
+    Value *Ptr = builder.CreateBitCast(reversedPtr, Alloca->getType());
+#endif
     /********* add by wb **************/
     if(!fix_len){
-
         std::pair<StructType*, StructType*> struct_types = declear_global_types(M);
         StructType* head_type = struct_types.first;
         StructType* list_type = struct_types.second;
@@ -1679,10 +1697,10 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
             insert_map_func->setCallingConv(CallingConv::C);
         }
 
-        Value *insert_call = builder.CreateCall(insert_map_func, {Size, MirroredPtr, gvar_struct_head});
+        Value *insert_call = builder.CreateCall(insert_map_func, {AcquiredSize, MirroredPtr, gvar_struct_head});
 
     }// end if(is_variable)
-    /************ added by wb end *************/
+    /************ end *******************/
 
 
     // Replace all uses of `Alloca' with the (now low-fat) `Ptr'.
@@ -1793,8 +1811,7 @@ static string get_value_name(Function* F, Value *param, map<Value *, string> &va
 
     int i = 0;
 
-    param->dump();
-
+    //param->dump();
     llvm::errs()<<"\nBEGIN get_value_name >>>>> "<< F->getName() <<" >>>>>>>>>>>>>>>>>>>>>>>>>\n";
     //errs()<<param<<"\n";
 
@@ -1844,8 +1861,7 @@ static std::map<Value*, string> collect_local_variable_metadata(Function& F){
                 if(MetadataAsValue* val = dyn_cast_or_null<MetadataAsValue>(llvm_dbg_value->getOperand(0))){
                     if(ValueAsMetadata* valueAsMetadata = dyn_cast<ValueAsMetadata>(val->getMetadata())){
 
-                        valueAsMetadata->getValue()->dump();
-
+                        //valueAsMetadata->getValue()->dump();
                         errs()<<"DUMPING META-INFO: "<<llvm_dbg_value->getVariable()->getRawName()->getString()<<"\n";
 
                         Value* key = valueAsMetadata->getValue();
@@ -1970,11 +1986,11 @@ static void symbolize(Module *M){
         if (F.isDeclaration())
             continue;
 
-        // map[varibale] = metadata
-        std::map<Value*, string> valueNameMap = collect_local_variable_metadata(F);
-
         string fname = F.getName().str();
         int idx = 0;
+
+        // map[varibale] = metadata
+        std::map<Value*, string> valueNameMap = collect_local_variable_metadata(F);
 
         for (auto &BB: F){
             for (auto &I: BB){
@@ -1982,11 +1998,11 @@ static void symbolize(Module *M){
                 //I.dump();
 
                 if(CallInst *call = dyn_cast<CallInst>(&I)){
-                    Function *F = call->getCalledFunction();
-                    if (!F->hasName()){
+                    Function *called = call->getCalledFunction();
+                    if (!called->hasName()){
                         continue;
                     }
-                    const string &Name = F->getName().str();
+                    const string &Name = called->getName().str();
                     // pick out lowfat_malloc
                     if(Name == "lowfat_malloc"){
                         Instruction* length_var = dyn_cast<Instruction>(call->getArgOperand(0));
@@ -2001,7 +2017,7 @@ static void symbolize(Module *M){
 
                         }else{
                             // allocate by local
-                            string value_name = get_value_name(F, length_var, valueNameMap);
+                            string value_name = get_value_name(&F, length_var, valueNameMap);
 
                             // TODO
                             process_lowfat_malloc(global_name, value_name, call, head_type, list_type, dels);

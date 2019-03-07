@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/*
+
 void foo(size_t len){
 	char arr[len];
 
@@ -21,22 +21,24 @@ void foo(size_t len){
     printf("String = \"%s\"\n", arr);
 
 }
-*/
 
+
+/*
 void bar(size_t len){
 	int val[len];
 
-
-	int i;
+	
+	int i = 0;
+	
 	for(i = 0; i < len; i++){
 		val[i] = i;
 	}
-	i = len + 1;
+	//i = len + 1;
 	
 	printf("len: %zu, size: %zu, i : %d\n", len, sizeof(val), i);
 
 	val[i] = 1234;
-}
+}*/
 
 
 int main(int argc, char **argv)
@@ -49,9 +51,9 @@ int main(int argc, char **argv)
    
     size_t len = (size_t)atoi(argv[1]);
 
-   	//foo(len);
+   	foo(len);
 
-	bar(len);
+	//bar(len);
 
     return 0;
 }

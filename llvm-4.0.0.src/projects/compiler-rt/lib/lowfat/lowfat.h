@@ -45,6 +45,10 @@ extern "C"
 #define LOWFAT_OOB_ERROR_ESCAPE_INSERT      9
 #define LOWFAT_OOB_ERROR_UNKNOWN            0xFF
 
+
+#define LOWFAT_REVERSE_MEM_LAYOUT
+
+
 #include <lowfat_config.h>
 
 /*
@@ -72,7 +76,7 @@ extern _LOWFAT_CONST bool lowfat_is_global_ptr(const void *_ptr);
  */
 static inline _LOWFAT_INLINE size_t lowfat_index(const void *_ptr)
 {
-    return (uintptr_t)_ptr / _LOWFAT_REGION_SIZE;
+    return (uintptr_t)_ptr / _LOWFAT_REGION_SIZE;   // _LOWFAT_REGION_SIZE is 0x800000000
 }
 
 /*
@@ -166,7 +170,7 @@ extern _LOWFAT_MALLOC void *lowfat_malloc(size_t _size);
 /*
  * add by wb, symbolize
  */
-extern void lowfat_insert_map(size_t size, void* result, MALLOC_LIST_HEAD* global_head);
+extern void lowfat_insert_map(size_t size, void* ptr, MALLOC_LIST_HEAD* global_head);
 
 extern _LOWFAT_MALLOC void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head);
 

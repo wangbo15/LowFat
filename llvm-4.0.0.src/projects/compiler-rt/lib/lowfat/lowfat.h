@@ -135,7 +135,7 @@ static inline _LOWFAT_CONST _LOWFAT_INLINE size_t lowfat_magic(const void *_ptr)
  * from `_ptr' itself.  If the size is unknown then this function returns
  * (SIZE_MAX - (uintptr_t)_ptr).
  */
-static inline _LOWFAT_CONST _LOWFAT_INLINE size_t lowfat_buffer_size(
+static inline _LOWFAT_CONST _LOWFAT_INLINE size_t lowfat_buffer_size(//TODO for reverse
     const void *_ptr)
 {
     return lowfat_size(_ptr) -

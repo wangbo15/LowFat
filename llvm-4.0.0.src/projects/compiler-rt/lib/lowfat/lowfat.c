@@ -533,7 +533,7 @@ extern void lowfat_oob_check(unsigned info, const void *ptr, size_t size0,
 {
     // If comment the IR built function in LowFat.cpp
     // the function here can be invoked
-    //fprintf(stdout, "Will never be called !\n");
+    // fprintf(stdout, "Will never be called !\n");
 
     size_t size = lowfat_size(baseptr);
 

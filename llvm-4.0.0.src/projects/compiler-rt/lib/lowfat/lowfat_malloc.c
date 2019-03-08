@@ -398,6 +398,7 @@ extern void *lowfat_realloc(void *ptr, size_t size)
     if (ptr == NULL || size == 0)
         return lowfat_malloc(size);
     if (lowfat_index(ptr) == lowfat_heap_select(size)) {
+        //TODO: for REVERSE
         if (lowfat_is_ptr(ptr)) {
 #ifndef LOWFAT_NO_PROTECT
             // `ptr' and `size' map to the same region; allocation can be avoided.
@@ -455,6 +456,7 @@ extern void *lowfat_calloc(size_t nmemb, size_t size)
  */
 extern int lowfat_posix_memalign(void **memptr, size_t align, size_t size)
 {
+    //TODO for reverse
     if (align < sizeof(void *) || (align & (align - 1)) != 0)
         lowfat_error("invalid posix_memalign parameter: %s",
             strerror(EINVAL));
@@ -549,7 +551,7 @@ extern char *lowfat_strdup(const char *str)
     if (len == str_size)
         lowfat_oob_error(LOWFAT_OOB_ERROR_STRDUP, str + str_size,
             lowfat_base(str));
-    char *str2 = (char *)lowfat_malloc(len+1);
+    char *str2 = (char *)lowfat_malloc(len+1);  //TODO for reverse
     memcpy(str2, str, len+1);
     return str2;
 }
@@ -559,7 +561,7 @@ extern char *lowfat_strdup(const char *str)
  */
 extern char *lowfat_strndup(const char *str, size_t n)
 {
-    size_t str_size = lowfat_buffer_size(str);
+    size_t str_size = lowfat_buffer_size(str);  //TODO for reverse
     size_t len = strnlen(str, (n > str_size? str_size: n));
     if (len == str_size)
         lowfat_oob_error(LOWFAT_OOB_ERROR_STRDUP, str + str_size,

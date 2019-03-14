@@ -9,7 +9,7 @@ Test: Test.cpp
 	$(CXX) $(CXXFLAGS_0) -c TestUninstrumented.cpp
 	$(CXX) $(CXXFLAGS) -c TestSupport.cpp
 	$(CXX) $(CXXFLAGS) -c Test.cpp
-	$(CXX) $(CXXFLAGS) Test.o TestSupport.o TestUninstrumented.o -o Test
+	$(CXX) $(CXXFLAGS) Test.o TestSupport.o TestUninstrumented.o -o Test -lstlimpl
 
 clean:
 	rm -rf Test a.out *.ll

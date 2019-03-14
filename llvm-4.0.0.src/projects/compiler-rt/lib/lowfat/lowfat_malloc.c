@@ -134,7 +134,7 @@ extern void *lowfat_malloc(size_t size)
 any_t GLB_PTR_MAP = NULL;
 
 
-extern void lowfat_insert_map(size_t acquiredSize, void* ptr, MALLOC_LIST_HEAD* global_head){
+extern void lowfat_insert_map(size_t requiredSize, void* ptr, MALLOC_LIST_HEAD* global_head){
     (global_head->time)++;
 
     // useless to maintain MALLOC_LIST
@@ -397,8 +397,9 @@ extern void *lowfat_realloc(void *ptr, size_t size)
     // (1) Check for cheap exits:
     if (ptr == NULL || size == 0)
         return lowfat_malloc(size);
+
+    // in the same size section
     if (lowfat_index(ptr) == lowfat_heap_select(size)) {
-        //TODO: for REVERSE
         if (lowfat_is_ptr(ptr)) {
 #ifndef LOWFAT_NO_PROTECT
             // `ptr' and `size' map to the same region; allocation can be avoided.
@@ -409,6 +410,10 @@ extern void *lowfat_realloc(void *ptr, size_t size)
                 lowfat_protect(prot_ptr, prot_size, true, true);
             }
 #endif      /* LOWFAT_NO_PROTECT */
+
+#ifdef LOWFAT_REVERSE_MEM_LAYOUT
+            ptr = (uint8_t *) ptr + (LOWFAT_SIZES[lowfat_index(ptr)] - size);
+#endif
             return ptr;
         }
     }
@@ -447,6 +452,8 @@ extern void *lowfat_realloc(void *ptr, size_t size)
 extern void *lowfat_calloc(size_t nmemb, size_t size)
 {
     void *ptr = lowfat_malloc(nmemb * size);
+
+    // is not reflected by LOWFAT_REVERSE_MEM_LAYOUT
     memset(ptr, 0, nmemb * size);
     return ptr;
 }

@@ -1521,14 +1521,15 @@ static void initializeGlobalHead(Module* M, GlobalVariable *gvar_struct_head, st
  */
 static void makeAllocaLowFatPtr(Module *M, Instruction *I)
 {
+
     AllocaInst *Alloca = dyn_cast<AllocaInst>(I);
     if (Alloca == nullptr)
         return;
 
     const DataLayout *DL = &M->getDataLayout();
-    Value *AcquiredSize = Alloca->getArraySize();
+    Value *RequiredSize = Alloca->getArraySize();
     Type *Ty = Alloca->getAllocatedType();
-    ConstantInt *ISize = dyn_cast<ConstantInt>(AcquiredSize);
+    ConstantInt *ISize = dyn_cast<ConstantInt>(RequiredSize);
     Function *F = I->getParent()->getParent();
     auto i = nextInsertPoint(F, Alloca);
     IRBuilder<> builder(i.first, i.second);
@@ -1576,9 +1577,12 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
             NewAlloca->setAlignment(Alloca->getAlignment());
             AllocedPtr = NewAlloca;
             delAlloca = true;
+            AllocatedSize = NewAlloca->getArraySize();
         }
-        else
+        else{
             AllocedPtr = builder.CreateBitCast(Alloca, builder.getInt8PtrTy());
+            AllocatedSize = RequiredSize;
+        }
         Offset = builder.getInt64(offset);
         CastAlloca = AllocedPtr;
         NoReplace1 = AllocedPtr;
@@ -1593,12 +1597,12 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
         delAlloca = true;
 
         // STEP (1): Get the index/offset:
-        AcquiredSize = builder.CreateMul(builder.getInt64(DL->getTypeAllocSize(Ty)),
-                                         AcquiredSize);
+        RequiredSize = builder.CreateMul(builder.getInt64(DL->getTypeAllocSize(Ty)),
+                                         RequiredSize);
         Constant *C = M->getOrInsertFunction("llvm.ctlz.i64",
             builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt1Ty(),
             nullptr);
-        Idx = builder.CreateCall(C, {AcquiredSize, builder.getInt1(true)});
+        Idx = builder.CreateCall(C, {RequiredSize, builder.getInt1(true)});
         if (CallInst *Call = dyn_cast<CallInst>(Idx))
             Call->setTailCall(true);
         C = M->getOrInsertFunction("lowfat_stack_offset",
@@ -1654,15 +1658,32 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
                                       builder.getInt8PtrTy(), builder.getInt8PtrTy(), builder.getInt64Ty(), builder.getInt64Ty(),
                                       nullptr);
 
-    Value *reversedPtr = builder.CreateCall(reveredFunc, {MirroredPtr, AcquiredSize, AllocatedSize});
+    // the last two parameter of lowfat_stack_reverse must be i64
+    if(IntegerType* type = dyn_cast<IntegerType>(RequiredSize->getType())){
+        if(type->getBitWidth() > 64){
+            RequiredSize = builder.CreateZExt(RequiredSize, builder.getInt64Ty());
+        } else if (type->getBitWidth() < 64) {
+            RequiredSize = builder.CreateTrunc(RequiredSize, builder.getInt64Ty());
+        }
+    }
+    if(IntegerType* type = dyn_cast<IntegerType>(AllocatedSize->getType())){
+        if(type->getBitWidth() > 64){
+            AllocatedSize = builder.CreateZExt(AllocatedSize, builder.getInt64Ty());
+        } else if (type->getBitWidth() < 64) {
+            AllocatedSize = builder.CreateTrunc(AllocatedSize, builder.getInt64Ty());
+        }
+    }
+
+    Value *reversedPtr = builder.CreateCall(reveredFunc, {MirroredPtr, RequiredSize, AllocatedSize});
 
     MirroredPtr = reversedPtr; // set mirrored to reversed
 
     NoReplace2 = MirroredPtr;
     Value *Ptr = builder.CreateBitCast(reversedPtr, Alloca->getType());
 #endif
+
     /********* add by wb **************/
-    if(!fix_len){
+    if(option_symbolize && !fix_len){
         std::pair<StructType*, StructType*> struct_types = declear_global_types(M);
         StructType* head_type = struct_types.first;
         StructType* list_type = struct_types.second;
@@ -1697,7 +1718,7 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
             insert_map_func->setCallingConv(CallingConv::C);
         }
 
-        Value *insert_call = builder.CreateCall(insert_map_func, {AcquiredSize, MirroredPtr, gvar_struct_head});
+        Value *insert_call = builder.CreateCall(insert_map_func, {RequiredSize, MirroredPtr, gvar_struct_head});
 
     }// end if(is_variable)
     /************ end *******************/

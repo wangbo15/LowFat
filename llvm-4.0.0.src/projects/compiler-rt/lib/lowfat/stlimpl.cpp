@@ -3,6 +3,7 @@
 //
 
 #include <map>
+#include <iostream>
 
 #include "stl_interface.h"
 
@@ -18,20 +19,33 @@ any_t map_create() {
 }
 
 void map_put(any_t map, size_t k, size_t v) {
+	if(map == 0x0){
+		std::cerr << "NULL PTR MAP\n";
+	}
+
     Map* m = reinterpret_cast<Map*> (map);
     m->insert(std::pair<size_t, size_t>(k, v));
 }
 
 size_t map_get(any_t map, size_t k) {
+	if(map == 0x0){
+		std::cerr << "NULL PTR MAP\n";
+		return 0;
+	}
+
     Map* m = reinterpret_cast<Map*> (map);
     if(m->count(k) == 0){
-        return 0x0;
+        return 0;
     }else{
         return (size_t) m->find(k)->second;
     }
 }
 
 void map_remove(any_t map, size_t k){
+	if(map == 0x0){
+		std::cerr << "NULL PTR MAP\n";
+	}
+	
     Map* m = reinterpret_cast<Map*> (map);
     if(m->count(k) > 0){
         m->erase(k);
@@ -39,6 +53,11 @@ void map_remove(any_t map, size_t k){
 }
 
 int map_size(any_t map){
+	if(map == 0x0){
+		std::cerr << "NULL PTR MAP\n";
+		return 0;
+	}
+	
     Map* m = reinterpret_cast<Map*> (map);
     return m->size();
 }

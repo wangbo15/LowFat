@@ -116,15 +116,20 @@ extern void *lowfat_malloc(size_t size)
     if (disable)
         return __libc_malloc(size);
 
-    void* res = lowfat_malloc_index(idx, size);
+    void* result = lowfat_malloc_index(idx, size);
 
-    /*
-    disable = true;
-    printf("\nLOWFAT_MALLOC >>>>>>> %p, size: %zu -> %zu\n", res, size, lowfat_size(res));
-    disable = false;
-     */
 
-	return res;
+#if LOWFAT_REVERSE_MEM_LAYOUT
+    if(idx != 0){
+        size_t alloc_size = LOWFAT_SIZES[idx];
+        result = (uint8_t *)result + (alloc_size - size);
+    }
+//    disable = true;
+//    fprintf(stderr, "BASE: %p, RES: %p, IDX: %zu, APPLY: %zu, SIZE: %zu\n", lowfat_base(result), result, idx, size, LOWFAT_SIZES[idx]);
+//    disable = false;
+#endif
+
+	return result;
 }
 
 #include "lowfat_ds.h"
@@ -174,34 +179,11 @@ extern void lowfat_insert_map(size_t requiredSize, void* ptr, MALLOC_LIST_HEAD* 
  */
 extern void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head)
 {
-    size_t idx = lowfat_heap_select(size);
-
-    static bool disable = false;
-    if (disable)
-        return __libc_malloc(size);
-
-    void* result = lowfat_malloc_index(idx, size);
-
-    disable = true;
-
-    printf("BASE: %p\nIDX: %zu\nAPPLY: %zu\nSIZE: %zu\n", result, idx, size, LOWFAT_SIZES[idx]);
-
-#ifdef LOWFAT_REVERSE_MEM_LAYOUT
-    //TODO: reverse
-    if(idx != 0){
-        size_t alloc_size = LOWFAT_SIZES[idx];
-        //uint8_t* metadata = (uint8_t *)result;
-        //*metadata = size;
-        result = (uint8_t *)result + (alloc_size - size);
-        printf("ADJUST PTR >>>> %p\n", result);
-    }
-#endif
+    void* result = lowfat_malloc(size);
 
     lowfat_insert_map(size, result, global_head);
 
-    printf("ADD TO MAP >>>> KEY: %p -->> VAL: %p\n", result, (any_t) global_head);
-
-    disable = false;
+    //fprintf(stderr, "lowfat_malloc_symbolize ADD TO MAP >>>> KEY: %p -->> VAL: %p\n", result, (any_t) global_head);
 
     return result;
 }
@@ -301,6 +283,9 @@ extern void lowfat_free(void *ptr)
     {
         // If `ptr' is not low-fat, then it is assumed to from a legacy
         // malloc() allocation.
+
+        //fprintf(stderr, "FREE NON_LOWFAT PTR %p\n", ptr);
+
         lowfat_fallback_free(ptr);
         return;
     }
@@ -397,9 +382,14 @@ extern void *lowfat_realloc(void *ptr, size_t size)
     // (1) Check for cheap exits:
     if (ptr == NULL || size == 0)
         return lowfat_malloc(size);
+    size_t oriSize = (size_t) ((uint8_t *) ptr - (uint8_t *)lowfat_base(ptr));
+
+    //fprintf(stderr, "REALLOC, PTR: %p, SIZE: %zu, ORI_SIZE: %zu\n", ptr, size, oriSize);
+
+    size_t idx = lowfat_index(ptr);
 
     // in the same size section
-    if (lowfat_index(ptr) == lowfat_heap_select(size)) {
+    if (idx == lowfat_heap_select(size)) {
         if (lowfat_is_ptr(ptr)) {
 #ifndef LOWFAT_NO_PROTECT
             // `ptr' and `size' map to the same region; allocation can be avoided.
@@ -412,9 +402,14 @@ extern void *lowfat_realloc(void *ptr, size_t size)
 #endif      /* LOWFAT_NO_PROTECT */
 
 #ifdef LOWFAT_REVERSE_MEM_LAYOUT
-            ptr = (uint8_t *) ptr + (LOWFAT_SIZES[lowfat_index(ptr)] - size);
-#endif
+            if(oriSize == size){
+                return ptr;
+            }
+            //other wise need free and apply a new block
+
+#else
             return ptr;
+#endif
         }
     }
     if (!lowfat_is_ptr(ptr))
@@ -425,7 +420,6 @@ extern void *lowfat_realloc(void *ptr, size_t size)
     if (newptr == NULL)
         return NULL;
     size_t cpy_size;
-    size_t idx = lowfat_index(ptr);
     size_t ptr_size = LOWFAT_SIZES[idx];
     cpy_size = (size < ptr_size? size: ptr_size);
 #ifndef LOWFAT_NO_PROTECT
@@ -463,6 +457,11 @@ extern void *lowfat_calloc(size_t nmemb, size_t size)
  */
 extern int lowfat_posix_memalign(void **memptr, size_t align, size_t size)
 {
+#ifdef LOWFAT_REVERSE_MEM_LAYOUT
+    fprintf(stderr, "lowfat_posix_memalign NOT IMPLEMENTED\n");
+    abort();
+#endif
+
     //TODO for reverse
     if (align < sizeof(void *) || (align & (align - 1)) != 0)
         lowfat_error("invalid posix_memalign parameter: %s",
@@ -553,6 +552,11 @@ extern void lowfat__ZdaPv(void *ptr) LOWFAT_ALIAS("lowfat_free");
  */
 extern char *lowfat_strdup(const char *str)
 {
+#ifdef LOWFAT_REVERSE_MEM_LAYOUT
+    fprintf(stderr, "lowfat_strdup NOT IMPLEMENTED\n");
+    abort();
+#endif
+
     size_t str_size = lowfat_buffer_size(str);
     size_t len = strnlen(str, str_size);
     if (len == str_size)
@@ -568,6 +572,11 @@ extern char *lowfat_strdup(const char *str)
  */
 extern char *lowfat_strndup(const char *str, size_t n)
 {
+#ifdef LOWFAT_REVERSE_MEM_LAYOUT
+    fprintf(stderr, "lowfat_strndup NOT IMPLEMENTED\n");
+    abort();
+#endif
+
     size_t str_size = lowfat_buffer_size(str);  //TODO for reverse
     size_t len = strnlen(str, (n > str_size? str_size: n));
     if (len == str_size)

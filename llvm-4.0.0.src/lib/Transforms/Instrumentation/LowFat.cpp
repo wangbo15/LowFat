@@ -551,6 +551,8 @@ static Bounds getConstantPtrBounds(const TargetLibraryInfo *TLI,
 /*
  * Analysis that attempts to statically determine the (approx.) bounds of the
  * given object pointed to by `Ptr'.
+ *
+ * boundsInfo: a cache map for ptr's bounds
  */
 static Bounds getPtrBounds(const TargetLibraryInfo *TLI, const DataLayout *DL,
     Value *Ptr, BoundsInfo &boundsInfo)
@@ -643,6 +645,15 @@ static Bounds getPtrBounds(const TargetLibraryInfo *TLI, const DataLayout *DL,
  */
 static Value *calcBasePtr(Function *F, Value *Ptr)
 {
+
+#if(defined LOWFAT_REVERSE_MEM_LAYOUT && defined LOWFAT_MEMCPY_CHECK)
+//#ifdef LOWFAT_REVERSE_MEM_LAYOUT
+    auto i = nextInsertPoint(F, Ptr);
+    IRBuilder<> builder(i.first, i.second);
+    Ptr = builder.CreateBitCast(Ptr, builder.getInt8PtrTy());
+    return Ptr;
+#else
+
     auto i = nextInsertPoint(F, Ptr);
     IRBuilder<> builder(i.first, i.second);
     Module *M = F->getParent();
@@ -651,6 +662,7 @@ static Value *calcBasePtr(Function *F, Value *Ptr)
     Ptr = builder.CreateBitCast(Ptr, builder.getInt8PtrTy());
     Value *BasePtr = builder.CreateCall(G, {Ptr});
     return BasePtr;
+#endif
 }
 
 /*
@@ -737,88 +749,84 @@ static Value *calcBasePtr(const TargetLibraryInfo *TLI, Function *F,
     Value *Ptr, PtrInfo &baseInfo)
 {
     auto i = baseInfo.find(Ptr);
-    if (i != baseInfo.end())
-        return i->second;
+    if (i != baseInfo.end()){
 
-    Value *BasePtr = ConstantPointerNull::get(
-        Type::getInt8PtrTy(Ptr->getContext()));
-    if (GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(Ptr))
+        return i->second;
+    }
+
+    Value *BasePtr = ConstantPointerNull::get(Type::getInt8PtrTy(Ptr->getContext()));
+
+    if (GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(Ptr)) {
         BasePtr = calcBasePtr(TLI, F, GEP->getPointerOperand(), baseInfo);
-    else if (AllocaInst *Alloca = dyn_cast<AllocaInst>(Ptr))
-    {
-        if (isInterestingAlloca(Alloca))
-        {
+    } else if (AllocaInst *Alloca = dyn_cast<AllocaInst>(Ptr)) {
+        if (isInterestingAlloca(Alloca)) {
             auto i = nextInsertPoint(F, Ptr);
             IRBuilder<> builder(i.first, i.second);
             BasePtr = builder.CreateBitCast(Ptr, builder.getInt8PtrTy());
         }
-    }
-    else if (BitCastInst *Cast = dyn_cast<BitCastInst>(Ptr))
+
+    } else if (BitCastInst *Cast = dyn_cast<BitCastInst>(Ptr)) {
         BasePtr = calcBasePtr(TLI, F, Cast->getOperand(0), baseInfo);
-    else if (SelectInst *Select = dyn_cast<SelectInst>(Ptr))
-    {
+    } else if (SelectInst *Select = dyn_cast<SelectInst>(Ptr)) {
         Value *BasePtrA = calcBasePtr(TLI, F, Select->getOperand(1),
             baseInfo);
         Value *BasePtrB = calcBasePtr(TLI, F, Select->getOperand(2),
             baseInfo);
         IRBuilder<> builder(Select);
-        BasePtr = builder.CreateSelect(Select->getOperand(0), BasePtrA,
-            BasePtrB);
-    }
-    else if (Constant *C = dyn_cast<Constant>(Ptr))
+        BasePtr = builder.CreateSelect(Select->getOperand(0), BasePtrA, BasePtrB);
+    } else if (Constant *C = dyn_cast<Constant>(Ptr)) {
+
         BasePtr = calcBasePtr(TLI, F, C, baseInfo);
-    else if (isa<IntToPtrInst>(Ptr) ||
+
+    } else if (isa<IntToPtrInst>(Ptr) ||
                 isa<Argument>(Ptr) ||
                 isa<LoadInst>(Ptr) ||
                 isa<ExtractValueInst>(Ptr) ||
-                isa<ExtractElementInst>(Ptr))
+                isa<ExtractElementInst>(Ptr)){
+
+        //TODO
         BasePtr = calcBasePtr(F, Ptr);
-    else if (isa<CallInst>(Ptr) || isa<InvokeInst>(Ptr))
-    {
-        if (isMemoryAllocation(TLI, Ptr))
-        {
+
+    } else if (isa<CallInst>(Ptr) || isa<InvokeInst>(Ptr)) {
+
+        if (isMemoryAllocation(TLI, Ptr)) {
             auto i = nextInsertPoint(F, Ptr);
             IRBuilder<> builder(i.first, i.second);
             BasePtr = builder.CreateBitCast(Ptr, builder.getInt8PtrTy());
-        }
-        else
+        } else {
             BasePtr = calcBasePtr(F, Ptr);
-    }
-    else if (PHINode *PHI = dyn_cast<PHINode>(Ptr))
-    {
+        }
+
+    } else if (PHINode *PHI = dyn_cast<PHINode>(Ptr)) {
+
         size_t numValues = PHI->getNumIncomingValues();
         IRBuilder<> builder(PHI);
         PHINode *BasePHI = builder.CreatePHI(builder.getInt8PtrTy(),
             numValues);
         baseInfo.insert(make_pair(Ptr, BasePHI));
-        for (size_t i = 0; i < numValues; i++)
-            BasePHI->addIncoming(UndefValue::get(builder.getInt8PtrTy()),
-                PHI->getIncomingBlock(i));
+        for (size_t i = 0; i < numValues; i++) {
+            BasePHI->addIncoming(UndefValue::get(builder.getInt8PtrTy()), PHI->getIncomingBlock(i));
+        }
         bool allNonFat = true;
-        for (size_t i = 0; i < numValues; i++)
-        {
-            Value *BasePtr = calcBasePtr(TLI, F, PHI->getIncomingValue(i),
-                baseInfo);
-            if (!isa<ConstantPointerNull>(BasePtr))
+        for (size_t i = 0; i < numValues; i++) {
+            Value *BasePtr = calcBasePtr(TLI, F, PHI->getIncomingValue(i), baseInfo);
+            if (!isa<ConstantPointerNull>(BasePtr)){
                 allNonFat = false;
+            }
             BasePHI->setIncomingValue(i, BasePtr);
         }
-        if (allNonFat)
-        {
+        if (allNonFat) {
             // Cannot erase the PHI since it may exist in baseInfo.
             baseInfo.erase(Ptr);
             baseInfo.insert(make_pair(Ptr, BasePtr));
             return BasePtr;
         }
+
         return BasePHI;
-    }
-    else
-    {
+    } else {
         Ptr->dump();
-        Ptr->getContext().diagnose(LowFatWarning(
-                    "(BUG) unknown pointer type (base)"));
-        BasePtr =
-            ConstantPointerNull::get(Type::getInt8PtrTy(Ptr->getContext()));
+        Ptr->getContext().diagnose(LowFatWarning("(BUG) unknown pointer type (base)"));
+        BasePtr = ConstantPointerNull::get(Type::getInt8PtrTy(Ptr->getContext()));
     }
 
     baseInfo.insert(make_pair(Ptr, BasePtr));
@@ -905,8 +913,9 @@ static void addToPlan(const TargetLibraryInfo *TLI, const DataLayout *DL,
     }
     if (bounds.isInBounds(size))
         return;
-    plan.push_back(make_tuple(I, Ptr, kind));
+    plan.push_back(make_tuple(I, Ptr, kind));   //tuple<Instruction *, Value *, unsigned>
 }
+
 static void getInterestingInsts(const TargetLibraryInfo *TLI,
     const DataLayout *DL, BoundsInfo &boundsInfo, Instruction *I, Plan &plan)
 {
@@ -930,21 +939,38 @@ static void getInterestingInsts(const TargetLibraryInfo *TLI,
     }
     else if (MemTransferInst *MI = dyn_cast<MemTransferInst>(I))
     {
+
         if (filterPtr(LOWFAT_OOB_ERROR_MEMCPY))
             return;
         IRBuilder<> builder(MI);
         Value *Src = builder.CreateBitCast(MI->getOperand(1),
             builder.getInt8PtrTy());
+
+        Value* lastIndex = MI->getOperand(2);
+
+#if(defined LOWFAT_REVERSE_MEM_LAYOUT && defined LOWFAT_MEMCPY_CHECK)
+        if(ConstantInt* CI = dyn_cast<ConstantInt>(lastIndex)){
+            APInt AI = CI->getValue();
+            AI--;
+            lastIndex = builder.getInt(AI);
+        }else{
+            lastIndex = builder.CreateSub(lastIndex, ConstantInt::get(lastIndex->getType(), 1, false));
+        }
+#endif
+
+        //MI: <dest>, <src>, <len>, <isvolatile>
         Value *SrcEnd = builder.CreateGEP(Src,
-            builder.CreateIntCast(MI->getOperand(2), builder.getInt64Ty(),
+            builder.CreateIntCast(lastIndex, builder.getInt64Ty(),
                 false));
+
         addToPlan(TLI, DL, boundsInfo, plan, I, SrcEnd,
             LOWFAT_OOB_ERROR_MEMCPY);
         Value *Dst = builder.CreateBitCast(MI->getOperand(0),
             builder.getInt8PtrTy());
         Value *DstEnd = builder.CreateGEP(Dst,
-            builder.CreateIntCast(MI->getOperand(2), builder.getInt64Ty(),
+            builder.CreateIntCast(lastIndex, builder.getInt64Ty(),
                 false));
+
         addToPlan(TLI, DL, boundsInfo, plan, I, DstEnd,
             LOWFAT_OOB_ERROR_MEMCPY);
         return;
@@ -1079,8 +1105,8 @@ static void insertBoundsCheck(const DataLayout *DL, Instruction *I, Value *Ptr,
     Value *BoundsCheck = M->getOrInsertFunction("lowfat_oob_check",
         builder.getVoidTy(), builder.getInt32Ty(), builder.getInt8PtrTy(),
         builder.getInt64Ty(), builder.getInt8PtrTy(), nullptr);
-    builder.CreateCall(BoundsCheck,
-        {builder.getInt32(info), Ptr, Size, BasePtr});
+
+    builder.CreateCall(BoundsCheck, {builder.getInt32(info), Ptr, Size, BasePtr});
 }
 
 /*
@@ -1088,6 +1114,7 @@ static void insertBoundsCheck(const DataLayout *DL, Instruction *I, Value *Ptr,
  */
 #include <malloc.h>
 
+// STRING(1234) -> "1234"
 #define STRING(a)   STRING2(a)
 #define STRING2(a)  #a
 #define REPLACE2(M, N, alloc)                                           \
@@ -1334,6 +1361,7 @@ static void addLowFatFuncs(Module *M)
         F->setLinkage(GlobalValue::InternalLinkage);
         F->addFnAttr(llvm::Attribute::AlwaysInline);
     }
+
 }
 
 /*
@@ -1527,9 +1555,11 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
         return;
 
     const DataLayout *DL = &M->getDataLayout();
-    Value *RequiredSize = Alloca->getArraySize();
+
+    Value *Size = Alloca->getArraySize();
+
     Type *Ty = Alloca->getAllocatedType();
-    ConstantInt *ISize = dyn_cast<ConstantInt>(RequiredSize);
+    ConstantInt *ISize = dyn_cast<ConstantInt>(Size);
     Function *F = I->getParent()->getParent();
     auto i = nextInsertPoint(F, Alloca);
     IRBuilder<> builder(i.first, i.second);
@@ -1538,6 +1568,7 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
     Value *CastAlloca = nullptr;
     Value *LifetimeSize = nullptr;
 
+    Value *RequiredSize = nullptr;
     Value *AllocatedSize = nullptr;
 
     bool delAlloca = false;
@@ -1547,7 +1578,9 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
     {
         // Simple+common case: fixed sized alloca:
         size_t size = DL->getTypeAllocSize(Ty) * ISize->getZExtValue();
-        
+
+        RequiredSize = ConstantInt::get(builder.getInt64Ty(), size);
+
         // STEP (1): Align the stack:
         size_t idx = clzll(size);
         if (idx <= clzll(LOWFAT_MAX_STACK_ALLOC_SIZE))
@@ -1577,6 +1610,7 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
             NewAlloca->setAlignment(Alloca->getAlignment());
             AllocedPtr = NewAlloca;
             delAlloca = true;
+
             AllocatedSize = NewAlloca->getArraySize();
         }
         else{
@@ -1597,8 +1631,7 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
         delAlloca = true;
 
         // STEP (1): Get the index/offset:
-        RequiredSize = builder.CreateMul(builder.getInt64(DL->getTypeAllocSize(Ty)),
-                                         RequiredSize);
+        RequiredSize = builder.CreateMul(builder.getInt64(DL->getTypeAllocSize(Ty)), Size);
         Constant *C = M->getOrInsertFunction("llvm.ctlz.i64",
             builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt1Ty(),
             nullptr);
@@ -1649,7 +1682,6 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
                                       nullptr);
     Value *MirroredPtr = builder.CreateCall(C, {AllocedPtr, Offset});
 
-#define LOWFAT_REVERSE_MEM_LAYOUT
 #ifndef LOWFAT_REVERSE_MEM_LAYOUT
     NoReplace2 = MirroredPtr;
     Value *Ptr = builder.CreateBitCast(MirroredPtr, Alloca->getType());
@@ -1718,7 +1750,7 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
             insert_map_func->setCallingConv(CallingConv::C);
         }
 
-        Value *insert_call = builder.CreateCall(insert_map_func, {RequiredSize, MirroredPtr, gvar_struct_head});
+        builder.CreateCall(insert_map_func, {RequiredSize, MirroredPtr, gvar_struct_head});
 
     }// end if(is_variable)
     /************ end *******************/
@@ -2013,6 +2045,8 @@ static void symbolize(Module *M){
         // map[varibale] = metadata
         std::map<Value*, string> valueNameMap = collect_local_variable_metadata(F);
 
+        errs()<<"================== "<<F.getName()<<"\n";
+
         for (auto &BB: F){
             for (auto &I: BB){
                 //errs()<<"\n\n  ======== "<<&I<<"\n";
@@ -2020,23 +2054,36 @@ static void symbolize(Module *M){
 
                 if(CallInst *call = dyn_cast<CallInst>(&I)){
                     Function *called = call->getCalledFunction();
-                    if (!called->hasName()){
+                    if (called == nullptr || !called->hasName()){
                         continue;
                     }
                     const string &Name = called->getName().str();
                     // pick out lowfat_malloc
                     if(Name == "lowfat_malloc"){
-                        Instruction* length_var = dyn_cast<Instruction>(call->getArgOperand(0));
+                        Value* length_var = dyn_cast<Value>(call->getArgOperand(0));
+
+                        if(length_var == nullptr){
+                            errs()<<"NULL!!!!!\n";
+                            call->getArgOperand(0)->dump();
+                        }
+                        length_var->dump();
 
                         string global_name = "LOWFAT_MALLOC_GLOBAL_" + fname + "_" + std::to_string(idx);
 
-                        if(Constant* constant = dyn_cast<Constant>(length_var)){
+                        if(ConstantInt* constant = dyn_cast<ConstantInt>(length_var)){
                             // allocate memory constantly
+                            string rawdata = std::to_string(*constant->getValue().getRawData());
+                            string value_name = F.getName().str() + "_const_" + rawdata;
+
+                            process_lowfat_malloc(global_name, value_name, call, head_type, list_type, dels);
 
                         }else if(GlobalValue* global =  dyn_cast<GlobalValue>(length_var)){
                             // allocate memory via a global
 
                         }else{
+
+                            //errs()<<"~~~~~~~~~~~~~~\n";
+
                             // allocate by local
                             string value_name = get_value_name(&F, length_var, valueNameMap);
 
@@ -2059,6 +2106,28 @@ static void symbolize(Module *M){
 
 }// end static void symbolize(Module *M)
 
+
+static void memory_overlap_check(Module *M) {
+    for(auto &F: *M){
+        if (F.isDeclaration())
+            continue;
+
+        for (auto &BB: F){
+            for (auto &I: BB) {
+                if(MemTransferInst* memInst = dyn_cast<MemTransferInst>(&I)){
+                    IRBuilder<> builder(memInst);
+                    Value* overFunc = M->getOrInsertFunction("lowfat_stack_mem_overlap",
+                                               builder.getVoidTy(),
+                                               builder.getInt8PtrTy(),
+                                               builder.getInt8PtrTy(),
+                                               builder.getInt64Ty(), nullptr);
+
+                    builder.CreateCall(overFunc, {memInst->getOperand(0), memInst->getOperand(1), memInst->getOperand(2)});
+                }
+            }
+        }
+    }
+}
 
 /*
  * LowFat LLVM Pass
@@ -2106,22 +2175,27 @@ struct LowFat : public ModulePass
             if (isBlacklisted(Blacklist.get(), &F))
                 continue;
 
+//            if(F.getName().str() == "xmalloc"){
+//                continue;
+//            }
+
             // STEP #1: Find all instructions that we need to instrument:
-            Plan plan;
-            BoundsInfo boundsInfo;
+            Plan plan;  //Plan: vector<tuple<Instruction *, Value *, unsigned>>: <pointer, bound, kind>
+            BoundsInfo boundsInfo;  //BoundsInfo: map<Value *, Bounds>
             for (auto &BB: F)
                 for (auto &I: BB)
                     getInterestingInsts(&TLI, DL, boundsInfo, &I, plan);
 
             // STEP #2: Calculate the base pointers:
-            PtrInfo baseInfo;
-            for (auto &p: plan)
-                (void)calcBasePtr(&TLI, &F, get<1>(p), baseInfo);
+            PtrInfo baseInfo;   // PtrInfo: map<Value *, Value *>
+            for (auto &p: plan){
+                (void)calcBasePtr(&TLI, &F, get<1>(p), baseInfo);   // get<1>(p): bound value
+            }
 
             // STEP #3: Add the bounds check:
-            for (auto &p: plan)
-                insertBoundsCheck(DL, get<0>(p), get<1>(p), get<2>(p),
-                    baseInfo);
+            for (auto &p: plan){
+                insertBoundsCheck(DL, get<0>(p), get<1>(p), get<2>(p), baseInfo);
+            }
         }
 
         // PASS (1a) Stack object lowfatification
@@ -2154,22 +2228,28 @@ struct LowFat : public ModulePass
         addLowFatFuncs(&M);
 
         // PASS (4): Optimize lowfat_malloc() calls
-        for (auto &F: M)
-        {
-            if (F.isDeclaration())
-                continue;
-            vector<Instruction *> dels;
-            for (auto &BB: F)
-                for (auto &I: BB)
-                    optimizeMalloc(&M, &I, dels);
-            for (auto &I: dels)
-                I->eraseFromParent();
-        }
+        /*if(!option_symbolize){
+            for (auto &F: M)
+            {
+                if (F.isDeclaration())
+                    continue;
+                vector<Instruction *> dels;
+                for (auto &BB: F)
+                    for (auto &I: BB)
+                        optimizeMalloc(&M, &I, dels);
+                for (auto &I: dels)
+                    I->eraseFromParent();
+            }
+        }*/
 
         // added by wb
         if(option_symbolize){
             symbolize(&M);
         }
+
+        #if(defined LOWFAT_REVERSE_MEM_LAYOUT && defined LOWFAT_MEMCPY_CHECK)
+        memory_overlap_check(&M);
+        #endif
 
         if (option_debug)
         {

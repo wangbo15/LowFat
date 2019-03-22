@@ -23,22 +23,20 @@ void foo(size_t len){
 }
 
 
-/*
-void bar(size_t len){
-	int val[len];
 
-	
+void bar(){
+
+	int val[5];
 	int i = 0;
 	
-	for(i = 0; i < len; i++){
+	for(i = 0; i < 5; i++){
 		val[i] = i;
 	}
-	//i = len + 1;
 	
-	printf("len: %zu, size: %zu, i : %d\n", len, sizeof(val), i);
-
+	printf("ENTER: bar()\n");
 	val[i] = 1234;
-}*/
+	printf("UNCHECKED !!!!!!!!!!\n");
+}
 
 
 int main(int argc, char **argv)
@@ -53,7 +51,7 @@ int main(int argc, char **argv)
 
    	foo(len);
 
-	//bar(len);
+	bar();
 
     return 0;
 }

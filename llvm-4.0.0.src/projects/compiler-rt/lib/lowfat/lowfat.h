@@ -46,9 +46,6 @@ extern "C"
 #define LOWFAT_OOB_ERROR_UNKNOWN            0xFF
 
 
-#define LOWFAT_REVERSE_MEM_LAYOUT
-
-
 #include <lowfat_config.h>
 
 /*
@@ -171,6 +168,8 @@ extern _LOWFAT_MALLOC void *lowfat_malloc(size_t _size);
  * add by wb, symbolize
  */
 extern void lowfat_insert_map(size_t size, void* ptr, MALLOC_LIST_HEAD* global_head);
+
+extern void lowfat_stack_mem_overlap(void* desc, void* src, size_t len);
 
 extern _LOWFAT_MALLOC void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head);
 

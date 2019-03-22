@@ -386,14 +386,36 @@ static LOWFAT_CONST void *lowfat_region(size_t idx)
     return (void *)(idx * LOWFAT_REGION_SIZE);
 }
 
+extern void lowfat_stack_mem_overlap(void* desc, void* src, size_t len){
+    size_t diff;
+
+    char* msg;
+    if(src > desc){
+        diff = (size_t)((const uint8_t *)src - (const uint8_t *)desc);
+        msg = "desc + len > src";
+    }else{
+        diff = (size_t)((const uint8_t *)desc - (const uint8_t *)src);
+        msg = "src + len > desc";
+    }
+
+    if(diff < len){
+        lowfat_error("mem-overlap error detected!\n"
+                     "\tsrc   = %p \n"
+                     "\tdesc  = %p\n"
+                     "\tlen   = %zu\n"
+                     "\t%s\n",
+                     src, desc, len, msg);
+    }
+}
+
 #ifdef LOWFAT_REVERSE_MEM_LAYOUT
-extern LOWFAT_CONST void *lowfat_stack_reverse(void *ptr, size_t acquired, size_t allocated)
+extern LOWFAT_CONST void *lowfat_stack_reverse(void *ptr, size_t required, size_t allocated)
 {
-    size_t offset = allocated - acquired;
+    size_t offset = allocated - required;
+    void *result = (void *)((uint8_t *)ptr + offset);
+    //fprintf(stderr, "lowfat_stack_reverse BASE: %p, RES: %p, REQ: %zu, OFFSET: %zu\n", ptr, result, required, offset);
 
-    fprintf(stderr, "BASE: %p, OFFSET: %zu\n", ptr, offset);
-
-    return (void *)((uint8_t *)ptr + offset);
+    return result;
 }
 #endif
 
@@ -482,19 +504,24 @@ extern LOWFAT_NORETURN void lowfat_oob_error(unsigned info,
 {
     const char *kind = lowfat_error_kind(info);
     ssize_t overflow = (ssize_t)ptr - (ssize_t)baseptr;
+
     if (overflow > 0)
         overflow -= lowfat_size(baseptr);
 
     // add by wb
-    fprintf(stderr, "ACCESSING baseptr: %p\n", baseptr);
+    fprintf(stderr, "lowfat_oob_error ACCESSING baseptr: %p\n", baseptr);
+
+    if(GLB_PTR_MAP == NULL){
+        GLB_PTR_MAP = map_create();
+    }
 
     size_t value = map_get(GLB_PTR_MAP, (size_t) baseptr);
 
     if(value == 0x0){
-        fprintf(stderr, "MAP_MISSING, SIZE: %d\n", map_size(GLB_PTR_MAP));
+        fprintf(stderr, "lowfat_oob_error MAP_MISSING, SIZE: %d\n", map_size(GLB_PTR_MAP));
     } else{
         MALLOC_LIST_HEAD* global_head = (MALLOC_LIST_HEAD*) value;
-        fprintf(stderr, "FIND NAME >>>>>>> %s\n", global_head->name);
+        fprintf(stderr, "lowfat_oob_error FIND NAME >>>>>>> %s\n", global_head->name);
     }
 
     // end added by wb
@@ -531,33 +558,45 @@ extern void lowfat_oob_warning(unsigned info,
 extern void lowfat_oob_check(unsigned info, const void *ptr, size_t size0,
     const void *baseptr)
 {
+    size_t size = lowfat_size(baseptr);
+    size_t diff;
+
+    //fprintf(stderr, "lowfat_oob_check CHECKING PTR %p -> BASE %p\n", ptr, baseptr);
+
+#ifndef LOWFAT_REVERSE_MEM_LAYOUT
     // If comment the IR built function in LowFat.cpp
     // the function here can be invoked
     // fprintf(stdout, "Will never be called !\n");
-
-    size_t size = lowfat_size(baseptr);
-
-#ifndef LOWFAT_REVERSE_MEM_LAYOUT
-    size_t diff = (size_t)((const uint8_t *)ptr - (const uint8_t *)baseptr);
-#else
-    size_t diff;
-    if(lowfat_is_heap_ptr(baseptr)){
-        diff = (size_t)((const uint8_t *)ptr - (const uint8_t *) lowfat_base(baseptr));
-    } else if(lowfat_is_stack_ptr(baseptr)){
-        diff = (size_t)((const uint8_t *)ptr - (const uint8_t *) lowfat_base(baseptr));
-
-        fprintf(stderr, "STACK !!!! PTR %p -> BASE %p, %zu\n", ptr, baseptr, diff);
-
-    } else{
-        diff = (size_t)((const uint8_t *)ptr - (const uint8_t *)baseptr);
-    }
-
-#endif
-
+    diff = (size_t)((const uint8_t *)ptr - (const uint8_t *)baseptr);
     size -= size0;
     if (diff >= size){
+        const char* msg = lowfat_is_heap_ptr(baseptr) ? "HEAP" : (lowfat_is_stack_ptr(baseptr) ? "STACK" : "UNKNOWN");
+        fprintf(stderr, "lowfat_oob_check %s ERROR PTR %p -> BASE %p, DIFF: %zu\n", msg, ptr, baseptr, diff);
         lowfat_oob_error(info, ptr, baseptr);
     }
+#else
+    #if 1
+    if(lowfat_is_heap_ptr(baseptr) || lowfat_is_stack_ptr(baseptr)){
+        diff = (size_t)((const uint8_t *)ptr - (const uint8_t *) lowfat_base(baseptr));
+    } else {
+        diff = (size_t)((const uint8_t *)ptr - (const uint8_t *)baseptr);
+    }
+    if (diff >= size){
+        const char* msg = lowfat_is_heap_ptr(baseptr) ? "HEAP" : (lowfat_is_stack_ptr(baseptr) ? "STACK" : "UNKNOWN");
+        fprintf(stderr, "lowfat_oob_check %s ERROR PTR %p -> BASE %p, DIFF: %zu\n", msg, ptr, baseptr, diff);
+        lowfat_oob_error(info, ptr, baseptr);
+    }
+    #else
+    void* secbase = lowfat_base(baseptr);
+    const void* end = (void *) ((const uint8_t *) secbase + size);
+    const void* next = (void *) ((const uint8_t *) ptr + 1);
+    if(ptr <= secbase || ptr > end || next <= secbase || next > end){
+        const char* msg = lowfat_is_heap_ptr(baseptr) ? "HEAP" : (lowfat_is_stack_ptr(baseptr) ? "STACK" : "UNKNOWN");
+        fprintf(stderr, "lowfat_oob_check %s ERROR PTR %p -> BASE %p, SEC: %p, DIFF: %zu\n", msg, ptr, baseptr, secbase, diff);
+        lowfat_oob_error(info, ptr, secbase);
+    }
+    #endif
+#endif
 
 }
 

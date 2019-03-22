@@ -552,6 +552,13 @@ static void compile(FILE *stream, FILE *hdr_stream, FILE *ld_stream,
             region_size);
         if (legacy)
             fprintf(hdr_stream, "#define _LOWFAT_LEGACY 1\n");
+        
+        const char* s = getenv("LOWFAT_REVERSE_MEM_LAYOUT");
+        //if(s != NULL){
+            fprintf(hdr_stream, "\n");
+            fprintf(hdr_stream, "#define LOWFAT_REVERSE_MEM_LAYOUT 1\n");
+        //}
+        
         fprintf(hdr_stream, "\n");
         fprintf(hdr_stream, "#endif\t/* __LOWFAT_CONFIG_H */\n");
     }

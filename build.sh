@@ -103,7 +103,7 @@ build_llvm()
 
 
         echo -e "${GREEN}$0${OFF}: creating libstlimpl.so for stl interface..."
-		$CLANGXX "$PWD/${RUNTIME_PATH}/stlimpl.cpp" -shared -fPIC -o libstlimpl.so
+		$CLANGXX "$PWD/${RUNTIME_PATH}/stlimpl.cpp" -shared -fPIC -o "$PWD/${RUNTIME_PATH}/libstlimpl.so"
 
         echo -e "${GREEN}$0${OFF}: creating lowfat.o standalone..."
         $CLANG -D_GNU_SOURCE -DLOWFAT_STANDALONE \
@@ -113,13 +113,13 @@ build_llvm()
             -DLOWFAT_LINUX -O2 $STANDALONE_OPTS "$PWD/${RUNTIME_PATH}/lowfat.c"
     fi
 
-    echo -e "${GREEN}$0${OFF}: cleaning up the LowFat config files..."
-    rm -f "$PWD/${RUNTIME_PATH}/lowfat_config.h" \
-          "$PWD/${RUNTIME_PATH}/lowfat_config.c" \
-          "$PWD/$INSTRUMENTATION_PATH/lowfat_config.inc" \
-          "$PWD/$INSTRUMENTATION_PATH/lowfat_config.h" \
-          "$PWD/$INSTRUMENTATION_PATH/lowfat.h" \
-          "$PWD/$CLANGLIB_PATH/lowfat_config.h"
+#    echo -e "${GREEN}$0${OFF}: cleaning up the LowFat config files..."
+#    rm -f "$PWD/${RUNTIME_PATH}/lowfat_config.h" \
+#          "$PWD/${RUNTIME_PATH}/lowfat_config.c" \
+#          "$PWD/$INSTRUMENTATION_PATH/lowfat_config.inc" \
+#          "$PWD/$INSTRUMENTATION_PATH/lowfat_config.h" \
+#          "$PWD/$INSTRUMENTATION_PATH/lowfat.h" \
+#          "$PWD/$CLANGLIB_PATH/lowfat_config.h"
 }
 
 if [ -t 1 ]
@@ -208,7 +208,7 @@ echo -e "${GREEN}$0${OFF}: building the LowFat config builder..."
 (cd config; CC=$CLANG CFLAGS="-std=gnu99" CXX=$CLANGXX make >/dev/null)
 
 echo -e "${GREEN}$0${OFF}: building the LowFat config..."
-(cd config; ./lowfat-config $CONFIG > lowfat-config.log)
+(cd config; ./lowfat-config $CONFIG --no-protect > lowfat-config.log)
 
 echo -e "${GREEN}$0${OFF}: building the LowFat config check..."
 (cd config; CC=$CLANG CLFAGS="-std=gnu99" CXX=$CLANGXX make lowfat-check-config >/dev/null)

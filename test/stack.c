@@ -1,12 +1,3 @@
-/*
- * Test program for #2 (https://github.com/GJDuck/LowFat/issues/2)
- *
- * Usage:
- *  $ clang -o issue_2 -O2 -fsanitize=lowfat issue_2.c
- *  $ ./issue_2
- * The program should abort with a OOB-read error.
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -21,8 +12,6 @@ void foo(size_t len){
     printf("String = \"%s\"\n", arr);
 
 }
-
-
 
 void bar(){
 

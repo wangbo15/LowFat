@@ -151,6 +151,10 @@ extern _LOWFAT_NORETURN void lowfat_oob_error(unsigned _info,
 extern void lowfat_oob_warning(unsigned _info, const void *_ptr,
     const void *_baseptr);
 
+
+extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size,
+                             const void *baseptr, const char* msg);
+
 /*
  * Check if the given pointer is OOB.  If it is then abort with a call to
  * lowfat_oob_error().

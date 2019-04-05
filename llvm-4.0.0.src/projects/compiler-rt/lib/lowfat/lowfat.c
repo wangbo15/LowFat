@@ -555,6 +555,158 @@ extern void lowfat_oob_warning(unsigned info,
         (overflow < 0? "underflow": "overflow "), overflow);
 }
 
+
+static int split (char *str, char c, char ***arr)
+{
+    int count = 1;
+    int token_len = 1;
+    int i = 0;
+    char *p;
+    char *t;
+
+    p = str;
+    while (*p != '\0')
+    {
+        if (*p == c)
+            count++;
+        p++;
+    }
+
+    *arr = (char**) malloc(sizeof(char*) * count);
+    if (*arr == NULL)
+        exit(1);
+
+    p = str;
+    while (*p != '\0')
+    {
+        if (*p == c)
+        {
+            (*arr)[i] = (char*) malloc( sizeof(char) * token_len );
+            if ((*arr)[i] == NULL)
+                exit(1);
+
+            token_len = 0;
+            i++;
+        }
+        p++;
+        token_len++;
+    }
+    (*arr)[i] = (char*) malloc( sizeof(char) * token_len );
+    if ((*arr)[i] == NULL)
+        exit(1);
+
+    i = 0;
+    p = str;
+    t = ((*arr)[i]);
+    while (*p != '\0')
+    {
+        if (*p != c && *p != '\0')
+        {
+            *t = *p;
+            t++;
+        }
+        else
+        {
+            *t = '\0';
+            i++;
+            t = ((*arr)[i]);
+        }
+        p++;
+    }
+    return count;
+}
+
+/**
+ * @param info
+ * @param ptr
+ * @param size0
+ * @param baseptr
+ * @param msg : ori_name#base_ptr_type#location
+ */
+extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size0, const void *baseptr, const char* msg){
+
+    char **arr = NULL;
+    int count = split(msg, '#', &arr);
+
+    if(count != 3){
+        fprintf(stderr, "ERROR MESSAGE FORMAT: %s\n", msg);
+        abort();
+    }
+
+    char* ptr_name = arr[0];
+    char* ptr_type = arr[1];
+    char* location = arr[2];
+
+    int ptr_width;
+    if(strcmp(ptr_type, "i8*") == 0){
+        ptr_width = 1;
+    } else if (strcmp(ptr_type, "i32*") == 0){
+        ptr_width = 4;
+    } else if (strcmp(ptr_type, "i64*") == 0){
+        ptr_width = 8;
+    } else if (strcmp(ptr_type, "i128*") == 0){
+        ptr_width = 16;
+    } else {
+        fprintf(stderr, "ERROR MESSAGE FORMAT: %s\n", ptr_type);
+        abort();
+    }
+
+    size_t size = lowfat_size(baseptr);
+    size_t diff;
+
+    if(lowfat_is_heap_ptr(baseptr) || lowfat_is_stack_ptr(baseptr)){
+        diff = (size_t)((const uint8_t *)ptr - (const uint8_t *) lowfat_base(baseptr));
+    } else {
+        diff = (size_t)((const uint8_t *)ptr - (const uint8_t *)baseptr);
+    }
+
+    if (diff >= size){
+        const char* loc_msg = lowfat_is_heap_ptr(baseptr) ? "HEAP" : (lowfat_is_stack_ptr(baseptr) ? "STACK" : "UNKNOWN");
+        fprintf(stderr, "lowfat_oob_check %s ERROR PTR %p -> BASE %p, DIFF: %zu\n", loc_msg, ptr, baseptr, diff);
+
+        const char *kind = lowfat_error_kind(info);
+        ssize_t overflow = (ssize_t)ptr - (ssize_t)baseptr;
+
+        // TODO
+//        if (overflow > 0){
+//            overflow -= lowfat_size(baseptr);
+//        }
+
+        if(GLB_PTR_MAP == NULL){
+            GLB_PTR_MAP = map_create();
+        }
+
+        size_t value = map_get(GLB_PTR_MAP, (size_t) baseptr);
+        if(value == 0x0){
+            fprintf(stderr, "lowfat_oob_error MAP_MISSING, SIZE: %d\n", map_size(GLB_PTR_MAP));
+        } else{
+            MALLOC_LIST_HEAD* global_head = (MALLOC_LIST_HEAD*) value;
+
+            int len = strlen(global_head->name);
+            int i = strcspn (global_head->name, "#");
+            if(i < len){
+                char name[len + 1];
+                strncpy(name, global_head->name, i);
+                name[i] = '\0';
+
+                fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s\n", ptr_name, name, location);
+            }
+
+            //fprintf(stderr, "lowfat_oob_error FIND NAME >>>>>>> %s\n", global_head->name);
+        }
+
+        lowfat_error(
+            "out-of-bounds error detected!\n"
+            "\toperation = %s\n"
+            "\tpointer   = %p (%s)\n"
+            "\tbase      = %p\n"
+            "\tsize      = %zu\n"
+            "\t%s = %+zd\n",
+            kind, ptr, lowfat_kind(ptr), baseptr, lowfat_size(baseptr),
+            (overflow < 0? "underflow ": "overflow "), overflow);
+    }
+}
+
 extern void lowfat_oob_check(unsigned info, const void *ptr, size_t size0,
     const void *baseptr)
 {

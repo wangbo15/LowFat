@@ -6,7 +6,7 @@ echo $LD_LIBRARY_PATH
 
 ../build/bin/clang -g -fsanitize=lowfat -mllvm -lowfat-debug -mllvm -lowfat-symbolize -lstlimpl global.c
 
-../build/bin/clang -g -lstlimpl -L/home/nightwish/workspace/bug_repair/LowFat/llvm-4.0.0.src/projects/compiler-rt/lib/lowfat/ -fsanitize=lowfat -mllvm -lowfat-no-replace-alloca -mllvm -lowfat-debug -mllvm -lowfat-symbolize global.c
+../build/bin/clang -g -lstlimpl -L/home/nightwish/workspace/bug_repair/LowFat/llvm-4.0.0.src/projects/compiler-rt/lib/lowfat/ -fsanitize=lowfat -mllvm -lowfat-debug -mllvm -lowfat-symbolize global.c
 
 
 ../build/bin/clang -fsanitize=lowfat -mllvm -lowfat-debug -lstlimpl stack.c 

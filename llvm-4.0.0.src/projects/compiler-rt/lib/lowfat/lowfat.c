@@ -647,8 +647,10 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
     } else if (strcmp(ptr_type, "i128*") == 0){
         ptr_width = 16;
     } else {
-        fprintf(stderr, "ERROR MESSAGE FORMAT: %s\n", ptr_type);
-        abort();
+
+        //TODO: 
+        //fprintf(stderr, "ERROR MESSAGE FORMAT: %s\n", ptr_type);
+        //abort();
     }
 
     size_t size = lowfat_size(baseptr);

@@ -1789,7 +1789,14 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
 
         // global name
         static int global_counter = 0;
-        string global_name = "LOWFAT_STACK_GLOBAL_" + F->getName().str() + "_" + std::to_string(global_counter);
+
+        size_t idx = M->getName().find(".");
+
+        string global_name = "LOWFAT_STACK_GLOBAL_"
+                + M->getName().substr(0, idx).str() + "_"+
+                F->getName().str() + "_" +
+                std::to_string(global_counter);
+
         global_counter++;
 
         // insert global
@@ -1948,25 +1955,14 @@ static string get_va_nm_tp(Function *F, Value *param, map<Value *, string> &valu
                 continue;
             }
             if(SExtInst* se = dyn_cast<SExtInst>(param)){
-                param = dyn_cast<Instruction>(se->getOperand(0));
-                continue;
+                if(Value* oper = dyn_cast<Instruction>(se->getOperand(0))){
+                    param = oper;
+                    continue;
+                } else {
+                    break;
+                }
+
             }
-
-            /*
-            errs()<<"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
-            param->dump();
-            //TODO: only for offset pointer now
-            if(GetElementPtrInst* gp = dyn_cast<GetElementPtrInst>(param)){
-
-                errs()<<"111111111111111111111111111\n";
-
-                gp->getOperand(0)->dump();
-                gp->getOperand(1)->dump();
-                gp->getOperand(2)->dump();
-
-                param = dyn_cast<Instruction>(gp->getOperand(2));
-                continue;
-            }*/
 
         }
     }
@@ -2025,7 +2021,7 @@ static std::map<Value*, string> collect_local_variable_metadata(Function& F){
                                 }
                             }
 
-                            errs()<<"DUMPING META-INFO: "<<name<<" "<<rso.str()<<"\n";
+                            //errs()<<"DUMPING META-INFO: "<<name<<" "<<rso.str()<<"\n";
 
                             valueNameMap[key] = name + "#" + rso.str();
                         }
@@ -2177,8 +2173,19 @@ static void symbolize(Module *M){
                         //errs()<<"-----------------------------\n";
                         //length_var->dump();
                         //length_var->getType()->dump();
+                        size_t from = M->getName().find_last_of("/");
 
-                        string global_name = "LOWFAT_MALLOC_GLOBAL_" + fname + "_" +
+                        if(from == StringRef::npos){
+                            from = 0;
+                        } else {
+                            from++;
+                        }
+
+                        size_t idx = M->getName().find(".");
+
+                        string global_name = "LOWFAT_MALLOC_GLOBAL_" +
+                                M->getName().substr(from, idx).str() + "_" +
+                                fname + "_" +
                                 std::to_string(idx);
 
                         if(ConstantInt* constant = dyn_cast<ConstantInt>(length_var)){
@@ -2220,7 +2227,7 @@ static void replace_oob_checker(Module *M){
         if (F.isDeclaration())
             continue;
 
-        errs()<<"================= "<<F.getName()<<"\n";
+        //errs()<<"================= "<<F.getName()<<"\n";
 
         for (auto &BB: F) {
 
@@ -2233,7 +2240,7 @@ static void replace_oob_checker(Module *M){
                     }
                     const string &Name = called->getName().str();
                     if (Name == "lowfat_oob_check") {
-
+                        
                         Value *pointer = call->getArgOperand(1);
 
                         Value *base = call->getArgOperand(3);
@@ -2249,7 +2256,6 @@ static void replace_oob_checker(Module *M){
                             }else if(gptr->getNumOperands() == 3){
                                 offset = gptr->getOperand(2);
                             }
-
 
                             string ptr_name = get_va_nm_tp(&F, offset, valueNameMap);
 

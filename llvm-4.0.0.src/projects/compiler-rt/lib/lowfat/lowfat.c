@@ -413,6 +413,7 @@ extern LOWFAT_CONST void *lowfat_stack_reverse(void *ptr, size_t required, size_
 {
     size_t offset = allocated - required;
     void *result = (void *)((uint8_t *)ptr + offset);
+
     //fprintf(stderr, "lowfat_stack_reverse BASE: %p, RES: %p, REQ: %zu, OFFSET: %zu\n", ptr, result, required, offset);
 
     return result;
@@ -509,7 +510,7 @@ extern LOWFAT_NORETURN void lowfat_oob_error(unsigned info,
         overflow -= lowfat_size(baseptr);
 
     // add by wb
-    fprintf(stderr, "lowfat_oob_error ACCESSING baseptr: %p\n", baseptr);
+    //fprintf(stderr, "lowfat_oob_error ACCESSING baseptr: %p\n", baseptr);
 
     if(GLB_PTR_MAP == NULL){
         GLB_PTR_MAP = map_create();
@@ -648,7 +649,7 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
         ptr_width = 16;
     } else {
 
-        //TODO: 
+        //TODO:
         //fprintf(stderr, "ERROR MESSAGE FORMAT: %s\n", ptr_type);
         //abort();
     }
@@ -710,12 +711,10 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
 }
 
 extern void lowfat_oob_check(unsigned info, const void *ptr, size_t size0,
-    const void *baseptr)
+    const void *baseptr, const char* location)
 {
     size_t size = lowfat_size(baseptr);
     size_t diff;
-
-    //fprintf(stderr, "lowfat_oob_check CHECKING PTR %p -> BASE %p\n", ptr, baseptr);
 
 #ifndef LOWFAT_REVERSE_MEM_LAYOUT
     // If comment the IR built function in LowFat.cpp
@@ -737,7 +736,7 @@ extern void lowfat_oob_check(unsigned info, const void *ptr, size_t size0,
     }
     if (diff >= size){
         const char* msg = lowfat_is_heap_ptr(baseptr) ? "HEAP" : (lowfat_is_stack_ptr(baseptr) ? "STACK" : "UNKNOWN");
-        fprintf(stderr, "lowfat_oob_check %s ERROR PTR %p -> BASE %p, DIFF: %zu\n", msg, ptr, baseptr, diff);
+        fprintf(stderr, "lowfat_oob_check %s ERROR PTR AT %s, %p -> BASE %p, DIFF: %zu\n", msg, location, ptr, baseptr, diff);
         lowfat_oob_error(info, ptr, baseptr);
     }
     #else

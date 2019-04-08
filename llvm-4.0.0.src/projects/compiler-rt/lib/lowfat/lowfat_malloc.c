@@ -124,9 +124,9 @@ extern void *lowfat_malloc(size_t size)
         size_t alloc_size = LOWFAT_SIZES[idx];
         result = (uint8_t *)result + (alloc_size - size);
     }
-//    disable = true;
-//    fprintf(stderr, "BASE: %p, RES: %p, IDX: %zu, APPLY: %zu, SIZE: %zu\n", lowfat_base(result), result, idx, size, LOWFAT_SIZES[idx]);
-//    disable = false;
+    disable = true;
+    fprintf(stderr, "BASE: %p, RES: %p, IDX: %zu, APPLY: %zu, SIZE: %zu\n", lowfat_base(result), result, idx, size, LOWFAT_SIZES[idx]);
+    disable = false;
 #endif
 
 	return result;
@@ -140,6 +140,9 @@ any_t GLB_PTR_MAP = NULL;
 
 
 extern void lowfat_insert_map(size_t requiredSize, void* ptr, MALLOC_LIST_HEAD* global_head){
+
+    //fprintf("lowfat_insert_map %zu, GLOBAL_HEAD: %p\n", requiredSize, global_head);
+
     (global_head->time)++;
 
     // useless to maintain MALLOC_LIST
@@ -184,6 +187,7 @@ extern void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head)
     lowfat_insert_map(size, result, global_head);
 
     //fprintf(stderr, "lowfat_malloc_symbolize ADD TO MAP >>>> KEY: %p -->> VAL: %p\n", result, (any_t) global_head);
+    //fprintf(stderr, "lowfat_malloc_symbolize: %p , SIZE: %zu\n", result, size);
 
     return result;
 }

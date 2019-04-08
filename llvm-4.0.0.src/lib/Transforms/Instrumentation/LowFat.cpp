@@ -1102,11 +1102,39 @@ static void insertBoundsCheck(const DataLayout *DL, Instruction *I, Value *Ptr,
     }
     Value *Size = builder.getInt64(size);
     Ptr = builder.CreateBitCast(Ptr, builder.getInt8PtrTy());
+
     Value *BoundsCheck = M->getOrInsertFunction("lowfat_oob_check",
         builder.getVoidTy(), builder.getInt32Ty(), builder.getInt8PtrTy(),
-        builder.getInt64Ty(), builder.getInt8PtrTy(), nullptr);
+        builder.getInt64Ty(), builder.getInt8PtrTy(), builder.getInt8PtrTy(), nullptr);
 
-    builder.CreateCall(BoundsCheck, {builder.getInt32(info), Ptr, Size, BasePtr});
+
+    const DebugLoc &location = I->getDebugLoc();
+    size_t line = location.getLine();
+    string message = I->getModule()->getName().str() + ":" + to_string(line);
+
+    Constant *msgConst = ConstantDataArray::getString(M->getContext(), message, true);
+
+    // plus one for \0
+    size_t len = message.length() + 1;
+
+    Type *arr_type = ArrayType::get(IntegerType::get(M->getContext(), 8), len);
+    GlobalVariable *gvar_name = new GlobalVariable(*M,
+                                                   arr_type,
+                                                   true,
+                                                   GlobalValue::PrivateLinkage,
+                                                   msgConst,
+                                                   ".str");
+    gvar_name->setAlignment(1);
+
+    ConstantInt *zero = ConstantInt::get(M->getContext(), APInt(32, StringRef("0"), 10));
+
+    std::vector<Constant *> indices;
+    indices.push_back(zero);
+    indices.push_back(zero);
+
+    Constant *get_ele_ptr = ConstantExpr::getGetElementPtr(arr_type, gvar_name, indices);
+
+    builder.CreateCall(BoundsCheck, {builder.getInt32(info), Ptr, Size, BasePtr, get_ele_ptr});
 }
 
 /*
@@ -1504,10 +1532,6 @@ static void makeGlobalVariableLowFatPtr(Module *M, GlobalVariable *GV)
     if (!isInterestingGlobal(GV))
         return;
 
-    if(GV->getName().endswith("_LOWFAT_GLOBAL_BASE")){
-        return;
-    }
-
     // If common linkage is used, then the linker will ignore the "section"
     // attribute and put the object in the .BSS section.  Note that doing this
     // may break some legacy code that depends on common symbols.
@@ -1521,26 +1545,11 @@ static void makeGlobalVariableLowFatPtr(Module *M, GlobalVariable *GV)
     Ty = PtrTy->getElementType();
     size_t size = DL->getTypeAllocSize(Ty);
 
-    /*
-    if(isa<PointerType>(Ty)){
-        errs()<<">>>>>>>> PTR SIZE: "<<size<<"\n";
-        GV->dump();
-        GV->getType()->dump();
-        errs()<<">>>>>>>>>>>>>>>>>>>>>>\n";
-    }
-    if(isa<ArrayType>(Ty)){
-        errs()<<">>>>>>>> ARRAY SIZE: "<<size<<"\n";
-        GV->dump();
-        GV->getType()->dump();
-        errs()<<">>>>>>>>>>>>>>>>>>>>>>\n";
-    }*/
-
-//    if(isa<PointerType>(Ty) || isa<ArrayType>(Ty)){
-//        GV->
-//    }
-
-
+#ifdef LOWFAT_REVERSE_MEM_LAYOUT
+    size_t idx = clzll(size - 1);
+#else
     size_t idx = clzll(size);
+#endif
     if (idx <= clzll(LOWFAT_MAX_GLOBAL_ALLOC_SIZE))
     {
         GV->dump();
@@ -1560,21 +1569,121 @@ static void makeGlobalVariableLowFatPtr(Module *M, GlobalVariable *GV)
 
     GV->setSection(section);
 
+}
+
+
+/**
+ * add padding to make global pointers reversed
+ * @param M
+ * @param GV
+ */
+static void makeGlobalVariableReverse(Module *M, GlobalVariable *GV, std::vector<llvm::GlobalVariable *> &Dels){
+    if (GV->isDeclaration())
+        return;
+    if (!isInterestingGlobal(GV))
+        return;
+
+    // skip external globals
+    if(GV->getLinkage() == GlobalValue::ExternalLinkage){
+        return;
+    }
+
+    if(GV->getName().startswith("LOWFAT_") || GV->getName().startswith(".str")){
+        return;
+    }
+
+    llvm::Type *Ty = GV->getType();
+    if(!Ty->isSized())
+        return;
+
+    llvm::PointerType *PtrTy = llvm::dyn_cast<llvm::PointerType>(Ty);
+    Ty = PtrTy->getElementType();
+
+    const llvm::DataLayout &DL = M->getDataLayout();
+
+    size_t size = DL.getTypeAllocSize(Ty);
+
+    size_t idx = clzll(size);
+
+    if (idx <= clzll(LOWFAT_MAX_GLOBAL_ALLOC_SIZE))
+    {
+        GV->dump();
+        GV->getContext().diagnose(LowFatWarning(
+                "Global variable cannot be made low-fat (too big)"));
+        return;
+    }
+//    size_t align = ~lowfat_stack_masks[idx] + 1;
+//    if (align > GV->getAlignment())
+//        GV->setAlignment(align);
+
+    size_t newSize = lowfat_stack_sizes[idx];
+
+    errs()<<">>>>>> " <<GV->getName()<<" "<<size<<" "<<newSize<<"\n";
+
+    std::string NewName("LOWFAT_GLOBAL_WRAPPER_");
+    NewName += GV->getName();
+
+    llvm::LLVMContext &Cxt = M->getContext();
+
+    ssize_t paddingSize = newSize - size;
+    llvm::Type* PaddingArrTp = ArrayType::get(IntegerType::getInt8Ty(Cxt), paddingSize);
+    llvm::StructType *NewTy = llvm::StructType::create(Cxt, {PaddingArrTp, Ty},
+                                                       "LOWFAT_GLOBAL_WRAPPER", /*isPacked=*/true);
+
+
+    llvm::Constant *NewGV0 = M->getOrInsertGlobal(NewName, NewTy);
+    llvm::GlobalVariable *NewGV = llvm::dyn_cast<llvm::GlobalVariable>(NewGV0);
+
+    if (NewGV == nullptr)
+        return;
+
+    if (GV->getLinkage() == llvm::GlobalValue::CommonLinkage)
+    {
+        // Convert common symbols into weak symbols:
+        NewGV->setLinkage(llvm::GlobalValue::WeakAnyLinkage);
+    }
+    else
+        NewGV->setLinkage(GV->getLinkage());
+
+    llvm::Constant *MetaInit = ConstantAggregateZero::get(PaddingArrTp);
+
+    //NewGV->setAlignment(align);
+    llvm::Constant *Init = nullptr;
+    if (GV->hasInitializer())
+        Init = GV->getInitializer();
+    else
+        Init = llvm::ConstantAggregateZero::get(Ty);
+
+    Init = llvm::ConstantStruct::get(NewTy, {MetaInit, Init});
+    NewGV->setInitializer(Init);
+
+    llvm::Constant *Idxs[] =
+            {llvm::ConstantInt::get(llvm::Type::getInt32Ty(Cxt), 0),
+             llvm::ConstantInt::get(llvm::Type::getInt32Ty(Cxt), 1)};
+    llvm::Constant *NewGV1 = llvm::ConstantExpr::getInBoundsGetElementPtr(
+            NewTy, NewGV, Idxs);
+    GV->replaceAllUsesWith(NewGV1);
+    Dels.push_back(GV);
+}
+
+static void replaceGlobalVaribaleDecl(Module *M, GlobalVariable *GV, std::vector<llvm::GlobalVariable *> &Dels) {
     /*
-    size_t offset = newSize - size;
-    for (User *U : GV->users()){
-        errs()<<"----\n";
-        U->dump();
+    if (!GV->isDeclaration())
+        return;
+    if (!isInterestingGlobal(GV))
+        return;
 
-        if(GetElementPtrInst* ptrInst = dyn_cast<GetElementPtrInst>(U)){
-            ptrInst->getOperand(1)->dump();
-        }else if(LoadInst* loadInst = dyn_cast<LoadInst>(U)){
-            loadInst->getOperand(0)->dump();
-        }
-
+    if(GV->getName().startswith("LOWFAT_GLOBAL_WRAPPER_")){
+        return;
     }*/
+    if(GV->getLinkage() == GlobalValue::ExternalLinkage){
+        errs()<<"0000000000000000000000000000\n";
+        GV->dump();
+    }
+
 
 }
+
 
 static pair<StructType*, StructType*> declear_global_types(Module* M);
 static string get_va_nm_tp(Function *F, Value *param, map<Value *, string> &valueNameMap);
@@ -1584,6 +1693,25 @@ static void initializeGlobalHead(Module* M,
         string val_name,
         StructType * head_type,
         StructType * list_type);
+
+static void modifyMemsetAlign(Module &M){
+    for (auto &F: M)
+    {
+        if (F.isDeclaration())
+            continue;
+
+        for (auto &BB: F)
+            for (auto &I: BB){
+                if(MemSetInst* memSetInst = dyn_cast<MemSetInst>(&I)){
+                    const uint64_t* align = memSetInst->getAlignmentCst()->getValue().getRawData();
+                    if(*align != 0 && *align != 1){
+                        memSetInst->setAlignment(ConstantInt::get(IntegerType::getInt32Ty(M.getContext()), 1));
+                    }
+                }
+            }
+
+    }
+}
 
 /*
  * Convert an alloca instruction into a low-fat-pointer.  This is a more
@@ -1800,7 +1928,7 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
         global_counter++;
 
         // insert global
-        GlobalVariable *gvar_struct_head = new GlobalVariable(*M, head_type, false, GlobalValue::ExternalLinkage, 0, global_name);
+        GlobalVariable *gvar_struct_head = new GlobalVariable(*M, head_type, false, GlobalValue::PrivateLinkage, 0, global_name);
         gvar_struct_head->setAlignment(8);
         initializeGlobalHead(M, gvar_struct_head, val_name, head_type, list_type);
 
@@ -2058,7 +2186,7 @@ static void process_lowfat_malloc(string glo_name,
     IRBuilder<> builder(call);
 
     Module* M = call->getModule();
-    GlobalVariable *gvar_struct_head = new GlobalVariable(*M, head_type, false, GlobalValue::ExternalLinkage, 0, global_name);
+    GlobalVariable *gvar_struct_head = new GlobalVariable(*M, head_type, false, GlobalValue::PrivateLinkage, 0, global_name);
     gvar_struct_head->setAlignment(8);
 
     initializeGlobalHead(M, gvar_struct_head, val_name, head_type, list_type);
@@ -2232,12 +2360,21 @@ static void replace_oob_checker(Module *M){
         for (auto &BB: F) {
 
             for (auto &I: BB) {
+
+                if(GetElementPtrInst* ge = dyn_cast<GetElementPtrInst>(&I)){
+                    if(ge->user_empty()){
+                        dels.push_back(&I);
+                        continue;
+                    }
+                }
+
                 std::map<Value *, string> valueNameMap = collect_local_variable_metadata(F);
                 if (CallInst *call = dyn_cast<CallInst>(&I)) {
                     Function *called = call->getCalledFunction();
                     if (called == nullptr || !called->hasName()) {
                         continue;
                     }
+
                     const string &Name = called->getName().str();
                     if (Name == "lowfat_oob_check") {
                         
@@ -2390,6 +2527,9 @@ struct LowFat : public ModulePass
         if (isBlacklisted(Blacklist.get(), &M))
             return true;
 
+//        if(M.getName().contains("parse-datetime.c")){
+//            return true;
+//        }
 
         // PASS (1): Bounds instrumentation
         const TargetLibraryInfo &TLI =
@@ -2440,10 +2580,31 @@ struct LowFat : public ModulePass
                 makeAllocaLowFatPtr(&M, I);
         }
 
+        #ifdef LOWFAT_REVERSE_MEM_LAYOUT
+        // remove alignment of llvm.memset
+        modifyMemsetAlign(M);
+        #endif
+
+
         // Pass (1b) Global Variable lowfatification
-        if (!option_no_replace_globals)
+        if (!option_no_replace_globals){
+
+            #if 0
+            std::vector<llvm::GlobalVariable *> Dels;
+            for (auto &GV: M.getGlobalList())
+                makeGlobalVariableReverse(&M, &GV, Dels);
+
+            for (auto GV: Dels)
+                GV->eraseFromParent();
+
+            Dels.clear();
+            #endif
+
             for (auto &GV: M.getGlobalList())
                 makeGlobalVariableLowFatPtr(&M, &GV);
+
+        }
+
 
 
         // PASS (2): Replace unsafe library calls

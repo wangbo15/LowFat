@@ -160,7 +160,7 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
  * lowfat_oob_error().
  */
 extern void lowfat_oob_check(unsigned _info, const void *_ptr, size_t _size,
-    const void *_baseptr);
+    const void *_baseptr, const char* location);
 
 /*
  * Safe replacement malloc().

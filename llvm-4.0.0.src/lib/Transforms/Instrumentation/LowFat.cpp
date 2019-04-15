@@ -1584,9 +1584,9 @@ static void makeGlobalVariableReverse(Module *M, GlobalVariable *GV, std::vector
         return;
 
     // skip external globals
-    if(GV->getLinkage() == GlobalValue::ExternalLinkage){
-        return;
-    }
+//    if(GV->getLinkage() == GlobalValue::ExternalLinkage){
+//        return;
+//    }
 
     if(GV->getName().startswith("LOWFAT_") || GV->getName().startswith(".str")){
         return;
@@ -1664,6 +1664,33 @@ static void makeGlobalVariableReverse(Module *M, GlobalVariable *GV, std::vector
             NewTy, NewGV, Idxs);
     GV->replaceAllUsesWith(NewGV1);
     Dels.push_back(GV);
+
+    switch (GV->getLinkage())
+    {
+        case llvm::GlobalValue::ExternalLinkage:
+        case llvm::GlobalValue::WeakAnyLinkage:
+        case llvm::GlobalValue::WeakODRLinkage:
+        case llvm::GlobalValue::CommonLinkage:
+        {
+            // We need to alias GV with NewGV offset by sizeof(EFFECTIVE_META).
+            // Unfortunately LLVM does not support global aliases to ConstExprs,
+            // so we use inline asm instead:
+            std::string Asm(".globl ");
+            Asm += GV->getName();
+            Asm += '\n';
+            Asm += ".set ";
+            Asm += GV->getName();
+            Asm += ", ";
+            Asm += NewGV->getName();
+            Asm += '+';
+            Asm += std::to_string(paddingSize);
+            M->appendModuleInlineAsm(Asm);
+            break;
+        }
+        default:
+            break;
+    }
+
 }
 
 static void replaceGlobalVaribaleDecl(Module *M, GlobalVariable *GV, std::vector<llvm::GlobalVariable *> &Dels) {
@@ -2589,7 +2616,7 @@ struct LowFat : public ModulePass
         // Pass (1b) Global Variable lowfatification
         if (!option_no_replace_globals){
 
-            #if 0
+            #ifdef LOWFAT_REVERSE_MEM_LAYOUT
             std::vector<llvm::GlobalVariable *> Dels;
             for (auto &GV: M.getGlobalList())
                 makeGlobalVariableReverse(&M, &GV, Dels);

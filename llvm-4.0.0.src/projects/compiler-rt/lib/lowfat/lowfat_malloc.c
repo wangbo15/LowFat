@@ -124,9 +124,9 @@ extern void *lowfat_malloc(size_t size)
         size_t alloc_size = LOWFAT_SIZES[idx];
         result = (uint8_t *)result + (alloc_size - size);
     }
-    disable = true;
-    fprintf(stderr, "BASE: %p, RES: %p, IDX: %zu, APPLY: %zu, SIZE: %zu\n", lowfat_base(result), result, idx, size, LOWFAT_SIZES[idx]);
-    disable = false;
+//    disable = true;
+//    fprintf(stderr, "BASE: %p, RES: %p, IDX: %zu, APPLY: %zu, SIZE: %zu\n", lowfat_base(result), result, idx, size, LOWFAT_SIZES[idx]);
+//    disable = false;
 #endif
 
 	return result;

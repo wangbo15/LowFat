@@ -11,6 +11,7 @@ echo $LD_LIBRARY_PATH
 
 ../build/bin/clang -fsanitize=lowfat -mllvm -lowfat-debug -lstlimpl stack.c 
 
+
 ../build/bin/clang -g -fsanitize=lowfat -mllvm -lowfat-debug -mllvm -lowfat-symbolize -lstlimpl stack.c
 
 

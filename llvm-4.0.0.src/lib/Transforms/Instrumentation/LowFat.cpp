@@ -1588,7 +1588,7 @@ static void makeGlobalVariableReverse(Module *M, GlobalVariable *GV, std::vector
 //        return;
 //    }
 
-    if(GV->getName().startswith("LOWFAT_") || GV->getName().startswith(".str")){
+    if(GV->getName().startswith("LOWFAT_")){
         return;
     }
 
@@ -1692,25 +1692,6 @@ static void makeGlobalVariableReverse(Module *M, GlobalVariable *GV, std::vector
     }
 
 }
-
-static void replaceGlobalVaribaleDecl(Module *M, GlobalVariable *GV, std::vector<llvm::GlobalVariable *> &Dels) {
-    /*
-    if (!GV->isDeclaration())
-        return;
-    if (!isInterestingGlobal(GV))
-        return;
-
-    if(GV->getName().startswith("LOWFAT_GLOBAL_WRAPPER_")){
-        return;
-    }*/
-    if(GV->getLinkage() == GlobalValue::ExternalLinkage){
-        errs()<<"0000000000000000000000000000\n";
-        GV->dump();
-    }
-
-
-}
-
 
 static pair<StructType*, StructType*> declear_global_types(Module* M);
 static string get_va_nm_tp(Function *F, Value *param, map<Value *, string> &valueNameMap);
@@ -1934,7 +1915,6 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
                 rso<<arrTp->getNumElements()<<"#";
                 arrTp->getElementType()->print(rso);
             }
-
             val_name = rso.str();
         }else{
             val_name = get_va_nm_tp(F, Alloca, valueNameMap);
@@ -2446,7 +2426,7 @@ static void replace_oob_checker(Module *M){
 
                             string msg = ptr_name + "#" + ptr_type + "#" + loc;
 
-                            errs() << "=============================== OOB CHECKING " << msg << "\n";
+                            //errs() << "=============================== OOB CHECKING " << msg << "\n";
 
                             Constant *msgConst = ConstantDataArray::getString(M->getContext(), msg, true);
 
@@ -2505,15 +2485,41 @@ static void memory_overlap_check(Module *M) {
 
         for (auto &BB: F){
             for (auto &I: BB) {
-                if(MemTransferInst* memInst = dyn_cast<MemTransferInst>(&I)){
-                    IRBuilder<> builder(memInst);
-                    Value* overFunc = M->getOrInsertFunction("lowfat_stack_mem_overlap",
+                if(MemCpyInst* memcpyInst = dyn_cast<MemCpyInst>(&I)){
+                    IRBuilder<> builder(memcpyInst);
+                    Value* overFunc = M->getOrInsertFunction("lowfat_memcpy_overlap",
                                                builder.getVoidTy(),
                                                builder.getInt8PtrTy(),
                                                builder.getInt8PtrTy(),
-                                               builder.getInt64Ty(), nullptr);
+                                               builder.getInt64Ty(),
+                                               builder.getInt8PtrTy(), nullptr);
 
-                    builder.CreateCall(overFunc, {memInst->getOperand(0), memInst->getOperand(1), memInst->getOperand(2)});
+                    const DebugLoc &location = I.getDebugLoc();
+                    int line = location.getLine();
+                    string loc = M->getName().str() + ":" + to_string(line);
+
+                    Constant *msgConst = ConstantDataArray::getString(M->getContext(), loc, true);
+
+                    // plus one for \0
+                    size_t len = loc.length() + 1;
+
+                    Type *arr_type = ArrayType::get(IntegerType::get(M->getContext(), 8), len);
+                    GlobalVariable *gvar_name = new GlobalVariable(*M,
+                                                                   arr_type,
+                                                                   true,
+                                                                   GlobalValue::PrivateLinkage,
+                                                                   msgConst,
+                                                                   ".str");
+                    gvar_name->setAlignment(1);
+                    ConstantInt *zero = ConstantInt::get(M->getContext(), APInt(32, StringRef("0"), 10));
+
+                    std::vector<Constant *> indices;
+                    indices.push_back(zero);
+                    indices.push_back(zero);
+
+                    Constant *get_ele_ptr = ConstantExpr::getGetElementPtr(arr_type, gvar_name, indices);
+
+                    builder.CreateCall(overFunc, {memcpyInst->getOperand(0), memcpyInst->getOperand(1), memcpyInst->getOperand(2), get_ele_ptr});
                 }
             }
         }
@@ -2661,9 +2667,9 @@ struct LowFat : public ModulePass
             replace_oob_checker(&M);
         }
 
-        #if(defined LOWFAT_REVERSE_MEM_LAYOUT && defined LOWFAT_MEMCPY_CHECK)
+        //#if(defined LOWFAT_REVERSE_MEM_LAYOUT && defined LOWFAT_MEMCPY_CHECK)
         memory_overlap_check(&M);
-        #endif
+        //#endif
 
         if (option_debug)
         {

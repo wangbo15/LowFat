@@ -386,11 +386,13 @@ static LOWFAT_CONST void *lowfat_region(size_t idx)
     return (void *)(idx * LOWFAT_REGION_SIZE);
 }
 
-extern void lowfat_stack_mem_overlap(void* desc, void* src, size_t len){
+extern void lowfat_memcpy_overlap(void* desc, void* src, size_t len, char* location){
     size_t diff;
 
     char* msg;
-    if(src > desc){
+    if(src == desc){
+        return;
+    } else if(src > desc){
         diff = (size_t)((const uint8_t *)src - (const uint8_t *)desc);
         msg = "desc + len > src";
     }else{
@@ -403,8 +405,9 @@ extern void lowfat_stack_mem_overlap(void* desc, void* src, size_t len){
                      "\tsrc   = %p \n"
                      "\tdesc  = %p\n"
                      "\tlen   = %zu\n"
+                     "\t%s\n"
                      "\t%s\n",
-                     src, desc, len, msg);
+                     src, desc, len, msg, location);
     }
 }
 
@@ -664,8 +667,12 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
     }
 
     if (diff >= size){
-        const char* loc_msg = lowfat_is_heap_ptr(baseptr) ? "HEAP" : (lowfat_is_stack_ptr(baseptr) ? "STACK" : "UNKNOWN");
-        fprintf(stderr, "lowfat_oob_check %s ERROR PTR %p -> BASE %p, DIFF: %zu\n", loc_msg, ptr, baseptr, diff);
+        const char* loc_msg = lowfat_is_heap_ptr(baseptr) ?
+                "HEAP" :
+                (lowfat_is_stack_ptr(baseptr) ? "STACK" :
+                (lowfat_is_global_ptr(baseptr) ? "GLOBAL" :
+                "UNKNOWN"));
+        fprintf(stderr, "lowfat_oob_check_verbose %s ERROR PTR %p -> BASE %p, DIFF: %zu\n", loc_msg, ptr, baseptr, diff);
 
         const char *kind = lowfat_error_kind(info);
         ssize_t overflow = (ssize_t)ptr - (ssize_t)baseptr;
@@ -735,19 +742,27 @@ extern void lowfat_oob_check(unsigned info, const void *ptr, size_t size0,
         diff = (size_t)((const uint8_t *)ptr - (const uint8_t *)baseptr);
     }
     if (diff >= size){
-        const char* msg = lowfat_is_heap_ptr(baseptr) ? "HEAP" : (lowfat_is_stack_ptr(baseptr) ? "STACK" : "UNKNOWN");
-        fprintf(stderr, "lowfat_oob_check %s ERROR PTR AT %s, %p -> BASE %p, DIFF: %zu\n", msg, location, ptr, baseptr, diff);
+        const char* loc_msg = lowfat_is_heap_ptr(baseptr) ?
+                              "HEAP" :
+                              (lowfat_is_stack_ptr(baseptr) ? "STACK" :
+                               (lowfat_is_global_ptr(baseptr) ? "GLOBAL" :
+                                "UNKNOWN"));
+        fprintf(stderr, "lowfat_oob_check %s ERROR PTR AT %s, %p -> BASE %p, DIFF: %zu\n", loc_msg, location, ptr, baseptr, diff);
         lowfat_oob_error(info, ptr, baseptr);
     }
     #else
     void* secbase = lowfat_base(baseptr);
     const void* end = (void *) ((const uint8_t *) secbase + size);
-    const void* next = (void *) ((const uint8_t *) ptr + 1);
-    if(ptr <= secbase || ptr > end || next <= secbase || next > end){
-        const char* msg = lowfat_is_heap_ptr(baseptr) ? "HEAP" : (lowfat_is_stack_ptr(baseptr) ? "STACK" : "UNKNOWN");
-        fprintf(stderr, "lowfat_oob_check %s ERROR PTR %p -> BASE %p, SEC: %p, DIFF: %zu\n", msg, ptr, baseptr, secbase, diff);
+
+    const char* msg = lowfat_kind(ptr);
+    if(ptr <= secbase){
+        diff = baseptr - ptr;
+        fprintf(stderr, "lowfat_oob_check %s UNDERFLOW PTR %p -> BASE %p, SEC: %p, DIFF: %zu\n", msg, ptr, baseptr, secbase, diff);
         lowfat_oob_error(info, ptr, secbase);
+    } else if(ptr > end){
+
     }
+
     #endif
 #endif
 

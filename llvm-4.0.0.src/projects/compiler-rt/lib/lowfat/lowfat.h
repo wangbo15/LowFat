@@ -173,7 +173,7 @@ extern _LOWFAT_MALLOC void *lowfat_malloc(size_t _size);
  */
 extern void lowfat_insert_map(size_t size, void* ptr, MALLOC_LIST_HEAD* global_head);
 
-extern void lowfat_stack_mem_overlap(void* desc, void* src, size_t len);
+extern void lowfat_memcpy_overlap(void* desc, void* src, size_t len, char* location);
 
 extern _LOWFAT_MALLOC void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head);
 

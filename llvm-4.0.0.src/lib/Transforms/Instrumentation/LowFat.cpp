@@ -64,7 +64,6 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ValueHandle.h"
 
-
 extern "C"
 {
 #include "lowfat_config.inc"
@@ -232,6 +231,13 @@ static cl::opt<bool> option_no_abort(
     "lowfat-no-abort",
     cl::desc("Do not abort the program if an OOB memory error occurs"));
 
+
+static string typeToStr(Type *type){
+    string str;
+    llvm::raw_string_ostream rso(str);
+    type->print(rso);
+    return rso.str();
+}
 /*
  * Fool-proof "leading zero count" implementation.  Also works for "0".
  */
@@ -1618,7 +1624,7 @@ static void makeGlobalVariableReverse(Module *M, GlobalVariable *GV, std::vector
 
     size_t newSize = lowfat_stack_sizes[idx];
 
-    errs()<<">>>>>> " <<GV->getName()<<" "<<size<<" "<<newSize<<"\n";
+    //errs()<<">>>>>> " <<GV->getName()<<" "<<size<<" "<<newSize<<"\n";
 
     std::string NewName("LOWFAT_GLOBAL_WRAPPER_");
     NewName += GV->getName();
@@ -1693,14 +1699,14 @@ static void makeGlobalVariableReverse(Module *M, GlobalVariable *GV, std::vector
 
 }
 
-static pair<StructType*, StructType*> declear_global_types(Module* M);
+static StructType* declear_global_types(Module* M);
 static string get_va_nm_tp(Function *F, Value *param, map<Value *, string> &valueNameMap);
 static map<Value*, string> collect_local_variable_metadata(Function& F);
 static void initializeGlobalHead(Module* M,
         GlobalVariable *gvar_struct_head,
         string val_name,
         StructType * head_type,
-        StructType * list_type);
+        GlobalValue* sizeGV);
 
 static void modifyMemsetAlign(Module &M){
     for (auto &F: M)
@@ -1898,9 +1904,7 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
 
     /********* add by wb **************/
     if(option_symbolize){
-        std::pair<StructType*, StructType*> struct_types = declear_global_types(M);
-        StructType* head_type = struct_types.first;
-        StructType* list_type = struct_types.second;
+        StructType* head_type = declear_global_types(M);
 
         std::map<Value*, string> valueNameMap = collect_local_variable_metadata(*F);
         string val_name;
@@ -1937,7 +1941,7 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
         // insert global
         GlobalVariable *gvar_struct_head = new GlobalVariable(*M, head_type, false, GlobalValue::PrivateLinkage, 0, global_name);
         gvar_struct_head->setAlignment(8);
-        initializeGlobalHead(M, gvar_struct_head, val_name, head_type, list_type);
+        initializeGlobalHead(M, gvar_struct_head, val_name, head_type, nullptr);
 
         Function* insert_map_func = M->getFunction("lowfat_insert_map");
         if (!insert_map_func) {
@@ -2030,7 +2034,7 @@ static void initializeGlobalHead(Module* M,
         GlobalVariable *gvar_struct_head,
         string val_name,
         StructType * head_type,
-        StructType * list_type){
+        GlobalValue* sizeGV){
 
     Constant *name = ConstantDataArray::getString(M->getContext(), val_name, true);
 
@@ -2057,7 +2061,11 @@ static void initializeGlobalHead(Module* M,
     std::vector<Constant*> contents;
     contents.push_back(zero);
     contents.push_back(get_ele_ptr);
-    contents.push_back(ConstantPointerNull::get(PointerType::get(list_type, 0)));
+    if(sizeGV){
+        contents.push_back(sizeGV);
+    }else{
+        contents.push_back(ConstantPointerNull::get(PointerType::get(IntegerType::get(M->getContext(), 64), 0)));
+    }
 
     Constant* const_head = ConstantStruct::get(head_type, contents);
     gvar_struct_head->setInitializer(const_head);
@@ -2077,24 +2085,47 @@ static string get_va_nm_tp(Function *F, Value *param, map<Value *, string> &valu
     while(i < instCount){
         i++;
 
+        //errs()<<"----------------------\n";
+        //param->dump();
+
         if(valueNameMap.count(param)){
             return valueNameMap[param];
         } else {
 
             if(BitCastInst* bc = dyn_cast<BitCastInst>(param)){
-                param = dyn_cast<Instruction>(bc->getOperand(0));
+                param = dyn_cast<Value>(bc->getOperand(0));
                 continue;
             }
             if(AllocaInst* al = dyn_cast<AllocaInst>(param)){
                 param = al->getArraySize();
                 continue;
             }
-            if(SExtInst* se = dyn_cast<SExtInst>(param)){
-                if(Value* oper = dyn_cast<Instruction>(se->getOperand(0))){
-                    param = oper;
-                    continue;
-                } else {
+            if(CastInst* castInst = dyn_cast<CastInst>(param)){
+                //errs()<<"CastInst \n";
+                //castInst->getOperand(0)->dump();
+                //castInst->getOperand(0)->getType()->dump();
+
+                if(isa<ConstantInt>(castInst->getOperand(0))){
                     break;
+                } else {
+                    param = castInst->getOperand(0);
+                    continue;
+                }
+            }
+            if(CallInst* call = dyn_cast<CallInst>(param)){
+                if(call->getCalledFunction()->getName().str() == "lowfat_base"){
+                    param = call->getArgOperand(0);
+                    continue;
+                }
+                if(call->getNumUses() == 2){ // TODO
+                    for(User *U : call->users()){
+                        //errs()<<"======\n";
+                        //U->dump();
+                        if (auto I = dyn_cast<BitCastInst>(U)){
+                            param = I;
+                            i--;
+                        }
+                    }
                 }
 
             }
@@ -2122,13 +2153,8 @@ static std::map<Value*, string> collect_local_variable_metadata(Function& F){
                         Value* key = valueAsMetadata->getValue();
                         if(key != nullptr){
                             string name = dbgValue->getVariable()->getRawName()->getString();
-
-                            string type;
-                            llvm::raw_string_ostream rso(type);
-                            //key->getType()->dump();
-                            key->getType()->print(rso);
-
-                            valueNameMap[key] = name + "#" + rso.str();
+                            string type = typeToStr(key->getType());
+                            valueNameMap[key] = name + "#" + type;
                         }
                     }
                 }
@@ -2182,7 +2208,7 @@ static void process_lowfat_malloc(string glo_name,
         string val_name,
         CallInst *call,
         StructType * head_type,
-        StructType * list_type,
+        GlobalValue* sizeGV,
         vector<Instruction *> &dels){
 
     StringRef global_name = StringRef(glo_name);
@@ -2196,7 +2222,7 @@ static void process_lowfat_malloc(string glo_name,
     GlobalVariable *gvar_struct_head = new GlobalVariable(*M, head_type, false, GlobalValue::PrivateLinkage, 0, global_name);
     gvar_struct_head->setAlignment(8);
 
-    initializeGlobalHead(M, gvar_struct_head, val_name, head_type, list_type);
+    initializeGlobalHead(M, gvar_struct_head, val_name, head_type, sizeGV);
 
     Function *symbolize_malloc_func = M->getFunction("lowfat_malloc_symbolize");
     if(symbolize_malloc_func == nullptr){
@@ -2223,45 +2249,65 @@ static void process_lowfat_malloc(string glo_name,
 }
 
 
-static std::pair<StructType*, StructType*> declear_global_types(Module* M){
+static StructType* declear_global_types(Module* M){
 
     std::vector<StructType *> types = M->getIdentifiedStructTypes();
 
     StructType* head_type = nullptr;
-    StructType* list_type = nullptr;
     for(auto &StructTy: types){
-
-        if(StructTy->getName().str() == "struct.malloc_linked_list"){
-            list_type = StructTy;
-        }else if(StructTy->getName().str() == "struct.malloc_linked_list_head"){
+        if(StructTy->getName().str() == "struct.malloc_linked_list_head"){
             head_type = StructTy;
         }
     }
     if(head_type == nullptr){
         head_type = StructType::create(M->getContext(), "struct.malloc_linked_list_head");
         std::vector<Type*> vec_list_head;
-        vec_list_head.push_back(IntegerType::get(M->getContext(), sizeof(int)));
-        vec_list_head.push_back(PointerType::get(IntegerType::get(M->getContext(), sizeof(char)), 0));
 
-        if(list_type == nullptr){
-            list_type  = StructType::create(M->getContext(), "struct.malloc_linked_list");
-            std::vector<Type*> vec_list_type;
-            vec_list_type.push_back(IntegerType::get(M->getContext(), sizeof(int)));
-            vec_list_type.push_back(PointerType::get(list_type, 0));
-            if (list_type->isOpaque()) {
-                list_type->setBody(vec_list_type, false);
-            }
-        }
-        vec_list_head.push_back(list_type);
+        // int time
+        vec_list_head.push_back(IntegerType::get(M->getContext(), 32));
+        // char* name
+        vec_list_head.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+        // size_t* glo_addr
+        vec_list_head.push_back(PointerType::get(IntegerType::get(M->getContext(), 64), 0));
+
         if (head_type->isOpaque()) {
             head_type->setBody(vec_list_head, false);
         }
     }
+    return head_type;
+}
 
-    pair <StructType*, StructType*> result;
-    result.first = head_type;
-    result.second = list_type;
-    return result;
+static string getGlobalName(Module *M, string fname){
+    static int idx;
+
+    size_t from = M->getName().find_last_of("/");
+
+    if(from == StringRef::npos){
+        from = 0;
+    } else {
+        from++;
+    }
+
+    size_t dot = M->getName().find(".");
+
+    string global_name = "LOWFAT_GLOBAL_HD" +
+                         M->getName().substr(from, dot).str() + "_" +
+                         fname + "_" +
+                         std::to_string(idx);
+    idx++;
+
+    return global_name;
+}
+
+static ConstantInt* getConstantIntVal(Value* val){
+    if(ConstantInt* cons = dyn_cast<ConstantInt>(val)){
+        return cons;
+    } else if(SExtInst* sext = dyn_cast<SExtInst>(val)){
+        return getConstantIntVal(sext->getOperand(0));
+    } else {
+        return nullptr;
+    }
+
 }
 
 /**
@@ -2269,10 +2315,7 @@ static std::pair<StructType*, StructType*> declear_global_types(Module* M){
  */
 static void symbolize(Module *M){
 
-    std::pair<StructType*, StructType*> struct_types = declear_global_types(M);
-
-    StructType* head_type = struct_types.first;
-    StructType* list_type = struct_types.second;
+    StructType* head_type = declear_global_types(M);
 
     vector<Instruction *> dels;
     for(auto &F: *M){
@@ -2280,7 +2323,6 @@ static void symbolize(Module *M){
             continue;
 
         string fname = F.getName().str();
-        int idx = 0;
 
         // map[varibale] = metadata
         std::map<Value*, string> valueNameMap = collect_local_variable_metadata(F);
@@ -2296,39 +2338,39 @@ static void symbolize(Module *M){
                         continue;
                     }
                     const string &Name = called->getName().str();
-                    // pick out lowfat_malloc
-                    if(Name == "lowfat_malloc"){
+
+                    if(Name == "lowfat_malloc"){ // pick out lowfat_malloc
                         Value* length_var = dyn_cast<Value>(call->getArgOperand(0));
 
-                        if(length_var == nullptr){
-                            fprintf(stderr, "NULL length value\n");
-                            abort();
+                        string global_name = getGlobalName(M, fname);
+
+                        bool globalized = false;
+                        // 1. if the argu is a globalized size
+                        if(LoadInst* load = dyn_cast<LoadInst>(length_var)){
+                            if(GlobalValue* GV = dyn_cast<GlobalValue>(load->getPointerOperand())){
+                                StringRef name = GV->getName();
+                                StringRef header("LOWFAT_GLOBAL_MS_");
+                                if(name.startswith(header)){
+                                    process_lowfat_malloc(global_name, name.str(), call, head_type, GV, dels);
+                                    globalized = true;
+                                }
+                            }
                         }
 
-                        //errs()<<"-----------------------------\n";
-                        //length_var->dump();
-                        //length_var->getType()->dump();
-                        size_t from = M->getName().find_last_of("/");
-
-                        if(from == StringRef::npos){
-                            from = 0;
-                        } else {
-                            from++;
+                        if(!globalized){
+                            errs()<<"Un-globalized Malloc\n";
                         }
 
-                        size_t idx = M->getName().find(".");
+                        /*
 
-                        string global_name = "LOWFAT_MALLOC_GLOBAL_" +
-                                M->getName().substr(from, idx).str() + "_" +
-                                fname + "_" +
-                                std::to_string(idx);
+                        // 2. otherwise
 
                         if(ConstantInt* constant = dyn_cast<ConstantInt>(length_var)){
                             // allocate memory constantly
                             string rawdata = std::to_string(*constant->getValue().getRawData());
                             string value_name = F.getName().str() + "_const_" + rawdata;
 
-                            process_lowfat_malloc(global_name, value_name, call, head_type, list_type, dels);
+                            process_lowfat_malloc(global_name, value_name, call, head_type, dels);
 
                         }else if(GlobalValue* global =  dyn_cast<GlobalValue>(length_var)){
                             // allocate memory via a global
@@ -2339,10 +2381,10 @@ static void symbolize(Module *M){
                             string value_name = get_va_nm_tp(&F, length_var, valueNameMap);
 
                             // TODO
-                            process_lowfat_malloc(global_name, value_name, call, head_type, list_type, dels);
+                            process_lowfat_malloc(global_name, value_name, call, head_type, dels);
                         }
 
-
+                        */
                     }
                 }
             }
@@ -2367,6 +2409,8 @@ static void replace_oob_checker(Module *M){
         for (auto &BB: F) {
 
             for (auto &I: BB) {
+
+                //I.dump();
 
                 if(GetElementPtrInst* ge = dyn_cast<GetElementPtrInst>(&I)){
                     if(ge->user_empty()){
@@ -2401,11 +2445,23 @@ static void replace_oob_checker(Module *M){
                                 offset = gptr->getOperand(2);
                             }
 
-                            string ptr_name = get_va_nm_tp(&F, offset, valueNameMap);
+                            //offset->dump();
+                            //errs()<<"PROCESSING OFFSET\n";
+
+                            string ptr_name;
+                            if(ConstantInt* CI = getConstantIntVal(offset)){
+                                string type = typeToStr(CI->getType());
+                                ptr_name = std::to_string(*(CI->getValue().getRawData())) + "#" + type;
+                            } else {
+                                ptr_name = get_va_nm_tp(&F, offset, valueNameMap);
+                            }
 
                             size_t pos = ptr_name.find("#");
 
                             ptr_name = ptr_name.substr(0, pos);
+
+                            //base->dump();
+                            //errs()<<"PROCESSING BASE\n";
 
                             string base_name = get_va_nm_tp(&F, base, valueNameMap);
 
@@ -2422,7 +2478,7 @@ static void replace_oob_checker(Module *M){
 
                             const DebugLoc &location = call->getDebugLoc();
                             int line = location.getLine();
-                            string loc = M->getName().str() + ":" + to_string(line);
+                            string loc = M->getName().str() + ":" + F.getName().str() + ":" + to_string(line);
 
                             string msg = ptr_name + "#" + ptr_type + "#" + loc;
 
@@ -2575,7 +2631,6 @@ struct LowFat : public ModulePass
             if (isBlacklisted(Blacklist.get(), &F))
                 continue;
 
-
             // STEP #1: Find all instructions that we need to instrument:
             Plan plan;  //Plan: vector<tuple<Instruction *, Value *, unsigned>>: <pointer, bound, kind>
             BoundsInfo boundsInfo;  //BoundsInfo: map<Value *, Bounds>
@@ -2637,8 +2692,6 @@ struct LowFat : public ModulePass
                 makeGlobalVariableLowFatPtr(&M, &GV);
 
         }
-
-
 
         // PASS (2): Replace unsafe library calls
         replaceUnsafeLibFuncs(&M);

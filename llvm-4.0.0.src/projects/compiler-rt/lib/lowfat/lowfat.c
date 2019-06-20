@@ -512,24 +512,6 @@ extern LOWFAT_NORETURN void lowfat_oob_error(unsigned info,
     if (overflow > 0)
         overflow -= lowfat_size(baseptr);
 
-    // add by wb
-    //fprintf(stderr, "lowfat_oob_error ACCESSING baseptr: %p\n", baseptr);
-
-    if(GLB_PTR_MAP == NULL){
-        GLB_PTR_MAP = map_create();
-    }
-
-    size_t value = map_get(GLB_PTR_MAP, (size_t) baseptr);
-
-    if(value == 0x0){
-        fprintf(stderr, "lowfat_oob_error MAP_MISSING, SIZE: %d\n", map_size(GLB_PTR_MAP));
-    } else{
-        MALLOC_LIST_HEAD* global_head = (MALLOC_LIST_HEAD*) value;
-        fprintf(stderr, "lowfat_oob_error FIND NAME >>>>>>> %s\n", global_head->name);
-    }
-
-    // end added by wb
-
     lowfat_error(
         "out-of-bounds error detected!\n"
         "\toperation = %s\n"
@@ -620,6 +602,15 @@ static int split (char *str, char c, char ***arr)
     return count;
 }
 
+static const char* get_lowfat_locmsg(void* baseptr){
+    const char* loc_msg = lowfat_is_heap_ptr(baseptr) ?
+                          "HEAP" :
+                          (lowfat_is_stack_ptr(baseptr) ? "STACK" :
+                           (lowfat_is_global_ptr(baseptr) ? "GLOBAL" :
+                            "UNKNOWN"));
+    return loc_msg;
+}
+
 /**
  * @param info
  * @param ptr
@@ -641,6 +632,7 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
     char* ptr_type = arr[1];
     char* location = arr[2];
 
+    #if 0
     int ptr_width;
     if(strcmp(ptr_type, "i8*") == 0){
         ptr_width = 1;
@@ -651,11 +643,11 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
     } else if (strcmp(ptr_type, "i128*") == 0){
         ptr_width = 16;
     } else {
-
         //TODO:
         //fprintf(stderr, "ERROR MESSAGE FORMAT: %s\n", ptr_type);
         //abort();
     }
+    #endif
 
     size_t size = lowfat_size(baseptr);
     size_t diff;
@@ -667,52 +659,44 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
     }
 
     if (diff >= size){
-        const char* loc_msg = lowfat_is_heap_ptr(baseptr) ?
-                "HEAP" :
-                (lowfat_is_stack_ptr(baseptr) ? "STACK" :
-                (lowfat_is_global_ptr(baseptr) ? "GLOBAL" :
-                "UNKNOWN"));
-        fprintf(stderr, "lowfat_oob_check_verbose %s ERROR PTR %p -> BASE %p, DIFF: %zu\n", loc_msg, ptr, baseptr, diff);
+        const char* loc_msg = get_lowfat_locmsg(baseptr);
+        //fprintf(stderr, "lowfat_oob_check_verbose %s ERROR PTR %p -> BASE %p, DIFF: %zu\n", loc_msg, ptr, baseptr, diff);
 
         const char *kind = lowfat_error_kind(info);
-        ssize_t overflow = (ssize_t)ptr - (ssize_t)baseptr;
+        ssize_t overflow = (ssize_t)ptr - (ssize_t) baseptr;
 
-        // TODO
-//        if (overflow > 0){
-//            overflow -= lowfat_size(baseptr);
-//        }
+        if(GLB_PTR_MAP != NULL){
+            size_t value = map_get(GLB_PTR_MAP, (size_t) lowfat_base(baseptr));
+            if(value == 0x0){
+                fprintf(stderr, "lowfat_oob_error MAP_MISSING, MAP SIZE: %d\n", map_size(GLB_PTR_MAP));
+            } else{
+                MALLOC_LIST_HEAD* global_head = (MALLOC_LIST_HEAD*) value;
 
-        if(GLB_PTR_MAP == NULL){
-            GLB_PTR_MAP = map_create();
-        }
+                int len = strlen(global_head->name);
+                int i = strcspn (global_head->name, "#");
+                if(i < len){
+                    char name[len + 1];
+                    strncpy(name, global_head->name, i);
+                    name[i] = '\0';
 
-        size_t value = map_get(GLB_PTR_MAP, (size_t) baseptr);
-        if(value == 0x0){
-            fprintf(stderr, "lowfat_oob_error MAP_MISSING, SIZE: %d\n", map_size(GLB_PTR_MAP));
-        } else{
-            MALLOC_LIST_HEAD* global_head = (MALLOC_LIST_HEAD*) value;
-
-            int len = strlen(global_head->name);
-            int i = strcspn (global_head->name, "#");
-            if(i < len){
-                char name[len + 1];
-                strncpy(name, global_head->name, i);
-                name[i] = '\0';
-
-                fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s\n", ptr_name, name, location);
+                    fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s\n", ptr_name, name, location);
+                } else {
+                    fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s\n", ptr_name, global_head->name, location);
+                }
             }
 
-            //fprintf(stderr, "lowfat_oob_error FIND NAME >>>>>>> %s\n", global_head->name);
         }
+
 
         lowfat_error(
             "out-of-bounds error detected!\n"
+            "\tlocation  = %s\n"
             "\toperation = %s\n"
             "\tpointer   = %p (%s)\n"
             "\tbase      = %p\n"
             "\tsize      = %zu\n"
             "\t%s = %+zd\n",
-            kind, ptr, lowfat_kind(ptr), baseptr, lowfat_size(baseptr),
+            location, kind, ptr, lowfat_kind(ptr), baseptr, lowfat_size(baseptr),
             (overflow < 0? "underflow ": "overflow "), overflow);
     }
 }
@@ -742,11 +726,7 @@ extern void lowfat_oob_check(unsigned info, const void *ptr, size_t size0,
         diff = (size_t)((const uint8_t *)ptr - (const uint8_t *)baseptr);
     }
     if (diff >= size){
-        const char* loc_msg = lowfat_is_heap_ptr(baseptr) ?
-                              "HEAP" :
-                              (lowfat_is_stack_ptr(baseptr) ? "STACK" :
-                               (lowfat_is_global_ptr(baseptr) ? "GLOBAL" :
-                                "UNKNOWN"));
+        const char* loc_msg = get_lowfat_locmsg(baseptr);
         fprintf(stderr, "lowfat_oob_check %s ERROR PTR AT %s, %p -> BASE %p, DIFF: %zu\n", loc_msg, location, ptr, baseptr, diff);
         lowfat_oob_error(info, ptr, baseptr);
     }

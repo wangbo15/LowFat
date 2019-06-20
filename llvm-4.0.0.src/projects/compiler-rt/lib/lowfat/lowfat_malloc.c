@@ -137,31 +137,13 @@ extern void *lowfat_malloc(size_t size)
 
 
 any_t GLB_PTR_MAP = NULL;
-
+any_t BASE2PTR_MAP = NULL;
 
 extern void lowfat_insert_map(size_t requiredSize, void* ptr, MALLOC_LIST_HEAD* global_head){
 
-    //fprintf("lowfat_insert_map %zu, GLOBAL_HEAD: %p\n", requiredSize, global_head);
+    //fprintf(stderr, "lowfat_insert_map %zu, PTR: %p => GLOBAL_HEAD: %p\n", requiredSize, ptr, global_head);
 
     (global_head->time)++;
-
-    // useless to maintain MALLOC_LIST
-    /*
-    MALLOC_LIST* item = __libc_malloc(sizeof(MALLOC_LIST));
-    item->size = acquiredSize;
-    if(global_head->next == NULL){
-        global_head->next = item;
-    }else{
-        MALLOC_LIST* tmp = global_head->next;
-        global_head->next = item;
-        item->next = tmp;
-    }
-
-    MALLOC_LIST* curr = global_head->next;
-    while(curr != NULL)	{
-        printf("DUMP HEAD >>>> %s ---->>>> %d\n", global_head->name, curr->size);
-        curr = curr->next;
-    }*/
 
     //TODO: add lock
     //lowfat_mutex_t mutex;
@@ -170,8 +152,14 @@ extern void lowfat_insert_map(size_t requiredSize, void* ptr, MALLOC_LIST_HEAD* 
         GLB_PTR_MAP = map_create();
     }
 
-    // add item: result_address -> global_head_address
-    map_put(GLB_PTR_MAP, (size_t) ptr, (size_t) global_head);
+    // add item: result_address_lowfat_base -> global_head_address
+    void* base = lowfat_base(ptr);
+    map_put(GLB_PTR_MAP, (size_t) base, (size_t) global_head);
+
+    if(BASE2PTR_MAP == NULL){
+        BASE2PTR_MAP = map_create();
+    }
+    map_put(BASE2PTR_MAP, (size_t) base, (size_t) ptr);
 }
 
 /**
@@ -183,12 +171,7 @@ extern void lowfat_insert_map(size_t requiredSize, void* ptr, MALLOC_LIST_HEAD* 
 extern void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head)
 {
     void* result = lowfat_malloc(size);
-
     lowfat_insert_map(size, result, global_head);
-
-    //fprintf(stderr, "lowfat_malloc_symbolize ADD TO MAP >>>> KEY: %p -->> VAL: %p\n", result, (any_t) global_head);
-    //fprintf(stderr, "lowfat_malloc_symbolize: %p , SIZE: %zu\n", result, size);
-
     return result;
 }
 

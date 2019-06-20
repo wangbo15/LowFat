@@ -6,6 +6,7 @@
 #ifndef LLVM_LOWFAT_DS_H
 #define LLVM_LOWFAT_DS_H
 
+#include <stdlib.h>
 
 typedef struct malloc_linked_list_head{
     // malloc times
@@ -14,19 +15,9 @@ typedef struct malloc_linked_list_head{
     // variable name
     char* name;
 
-    // malloc list
-    struct malloc_linked_list *next;
-
+    // the pointer of the globalized size, for symbolic
+    size_t* glo_addr;
 } MALLOC_LIST_HEAD;
-
-
-typedef struct malloc_linked_list{
-    // malloc size
-    int size;
-
-    // the next node
-    struct malloc_linked_list *next;
-} MALLOC_LIST;
 
 
 #endif

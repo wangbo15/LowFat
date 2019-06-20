@@ -13,6 +13,7 @@ void foo(size_t len){
 
 }
 
+/*
 void bar(){
 
 	int val[5];
@@ -25,7 +26,7 @@ void bar(){
 	printf("ENTER: bar()\n");
 	val[i] = 1234;
 	printf("UNCHECKED !!!!!!!!!!\n");
-}
+}*/
 
 
 int main(int argc, char **argv)
@@ -40,7 +41,7 @@ int main(int argc, char **argv)
 
    	foo(len);
 
-	bar();
+	//bar();
 
     return 0;
 }

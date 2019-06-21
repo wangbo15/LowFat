@@ -674,19 +674,20 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
 
                 int len = strlen(global_head->name);
                 int i = strcspn (global_head->name, "#");
+                char name[len + 1];
                 if(i < len){
-                    char name[len + 1];
                     strncpy(name, global_head->name, i);
                     name[i] = '\0';
-
-                    fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s\n", ptr_name, name, location);
-                } else {
-                    fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s\n", ptr_name, global_head->name, location);
                 }
+
+                fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s\n", ptr_name, name, location);
+
+                //FILE* output = fopen("./sanitizer.out", "w+");
+                //fprintf(output, "%s#(%s < %s)\n", location, ptr_name, name);
+                //fclose(output);
             }
 
         }
-
 
         lowfat_error(
             "out-of-bounds error detected!\n"

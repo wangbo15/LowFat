@@ -139,6 +139,12 @@ static inline _LOWFAT_CONST _LOWFAT_INLINE size_t lowfat_buffer_size(//TODO for 
         ((const uint8_t *)(_ptr) - (const uint8_t *)lowfat_base(_ptr));
 }
 
+
+/*
+ * Report an integer-overflow error and abort execution.
+ */
+extern _LOWFAT_NORETURN void lowfat_iof_error(const void *Data, const char* left, const char* right, const unsigned int opcode);
+
 /*
  * Report an out-of-bounds memory error and abort execution.
  */

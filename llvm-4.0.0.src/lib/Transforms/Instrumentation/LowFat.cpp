@@ -2582,6 +2582,103 @@ static void memory_overlap_check(Module *M) {
     }
 }
 
+
+static void insert_iof_handler(Module *M) {
+    for(auto &F: *M){
+        if (F.isDeclaration())
+            continue;
+
+        std::map<Value *, string> valueNameMap = collect_local_variable_metadata(F);
+
+        for (auto &BB: F){
+            for (auto &I: BB){
+                if(CallInst *call = dyn_cast<CallInst>(&I)) {
+                    Function *called = call->getCalledFunction();
+                    if (called == nullptr || !called->hasName()) {
+                        continue;
+                    }
+                    const string &Name = called->getName().str();
+                    if (Name == "__ubsan_handle_add_overflow") {
+
+                        IRBuilder<> builder(&I);
+
+                        Function* handler = M->getFunction("lowfat_iof_error");
+                        if (!handler) {
+                            std::vector<Type*> typeVec;
+                            typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+                            typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+                            typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+                            typeVec.push_back(IntegerType::get(M->getContext(), 32));
+
+                            FunctionType* printfType = FunctionType::get(builder.getVoidTy(), typeVec, true);
+                            handler = Function::Create(printfType, GlobalValue::ExternalLinkage, "lowfat_iof_error", M);
+                            handler->setCallingConv(CallingConv::C);
+                        }
+
+                        Value* data = call->getArgOperand(0);
+
+                        string leftName = get_va_nm_tp(&F, call->getArgOperand(1), valueNameMap);
+
+                        size_t pos = leftName.find("#");
+                        if(pos != string::npos){
+                            leftName = leftName.substr(0, pos);
+                        }
+
+                        string rightName = get_va_nm_tp(&F, call->getArgOperand(2), valueNameMap);
+                        pos = rightName.find("#");
+                        if(pos != string::npos){
+                            rightName = rightName.substr(0, pos);
+                        }
+
+                        errs()<<"__ubsan_handle_add_overflow "<<leftName<<" "<<rightName<<"\n";
+
+                        Constant *leftNameConst = ConstantDataArray::getString(M->getContext(), leftName, true);
+
+                        size_t leftLen = leftName.length() + 1;
+
+                        Type *leftArrType = ArrayType::get(IntegerType::get(M->getContext(), 8), leftLen);
+                        GlobalVariable *leftGV = new GlobalVariable(*M,
+                                                                    leftArrType,
+                                                                    true,
+                                                                    GlobalValue::PrivateLinkage,
+                                                                    leftNameConst,
+                                                                    ".str");
+                        leftGV->setAlignment(1);
+
+                        ConstantInt *zero = ConstantInt::get(M->getContext(), APInt(32, StringRef("0"), 10));
+
+                        std::vector<Constant *> indices;
+                        indices.push_back(zero);
+                        indices.push_back(zero);
+
+                        Constant *leftGEP = ConstantExpr::getGetElementPtr(leftArrType, leftGV, indices);
+
+                        Constant *rightNameConst = ConstantDataArray::getString(M->getContext(), rightName, true);
+
+                        size_t rightLen = rightName.length() + 1;
+
+                        Type *rightArrType = ArrayType::get(IntegerType::get(M->getContext(), 8), rightLen);
+                        GlobalVariable *rightGV = new GlobalVariable(*M,
+                                                                    rightArrType,
+                                                                    true,
+                                                                    GlobalValue::PrivateLinkage,
+                                                                    rightNameConst,
+                                                                    ".str");
+                        rightGV->setAlignment(1);
+
+                        Constant *rightGEP = ConstantExpr::getGetElementPtr(rightArrType, rightGV, indices);
+
+                        builder.CreateCall(handler, {data, leftGEP, rightGEP, ConstantInt::get(IntegerType::get(M->getContext(), 32), 0)});
+                    }
+                }
+            } // end for I : BB
+
+        } // end for BB : F
+    } // end for F: M
+
+}
+
+
 /*
  * LowFat LLVM Pass
  */
@@ -2718,11 +2815,12 @@ struct LowFat : public ModulePass
         if(option_symbolize){
             symbolize(&M);
             replace_oob_checker(&M);
-        }
 
-        //#if(defined LOWFAT_REVERSE_MEM_LAYOUT && defined LOWFAT_MEMCPY_CHECK)
-        memory_overlap_check(&M);
-        //#endif
+            memory_overlap_check(&M);
+
+            // integer overflow handler
+            insert_iof_handler(&M);
+        }
 
         if (option_debug)
         {

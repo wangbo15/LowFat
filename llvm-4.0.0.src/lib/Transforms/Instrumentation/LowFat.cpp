@@ -2582,6 +2582,29 @@ static void memory_overlap_check(Module *M) {
     }
 }
 
+static Constant* insertGlobalStrAndGenGEP(Module *M, string str){
+    Constant *NameConst = ConstantDataArray::getString(M->getContext(), str, true);
+
+    size_t len = str.length() + 1;
+
+    Type *ArrType = ArrayType::get(IntegerType::get(M->getContext(), 8), len);
+    GlobalVariable *GV = new GlobalVariable(*M,
+                                                ArrType,
+                                                true,
+                                                GlobalValue::PrivateLinkage,
+                                                NameConst,
+                                                ".str");
+    GV->setAlignment(1);
+
+    ConstantInt *zero = ConstantInt::get(M->getContext(), APInt(32, StringRef("0"), 10));
+
+    std::vector<Constant *> indices;
+    indices.push_back(zero);
+    indices.push_back(zero);
+
+    Constant *GEP = ConstantExpr::getGetElementPtr(ArrType, GV, indices);
+    return GEP;
+}
 
 static void insert_iof_handler(Module *M) {
     for(auto &F: *M){
@@ -2598,8 +2621,20 @@ static void insert_iof_handler(Module *M) {
                         continue;
                     }
                     const string &Name = called->getName().str();
+                    bool needInsert = false;
+                    char op = 0;
                     if (Name == "__ubsan_handle_add_overflow") {
+                        needInsert = true;
+                        op = '+';
+                    } else if (Name == "__ubsan_handle_sub_overflow") {
+                        needInsert = true;
+                        op = '-';
+                    } else if (Name == "__ubsan_handle_mul_overflow") {
+                        needInsert = true;
+                        op = '*';
+                    }
 
+                    if(needInsert){
                         IRBuilder<> builder(&I);
 
                         Function* handler = M->getFunction("lowfat_iof_error");
@@ -2608,7 +2643,7 @@ static void insert_iof_handler(Module *M) {
                             typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
                             typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
                             typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
-                            typeVec.push_back(IntegerType::get(M->getContext(), 32));
+                            typeVec.push_back(IntegerType::get(M->getContext(), 8));
 
                             FunctionType* printfType = FunctionType::get(builder.getVoidTy(), typeVec, true);
                             handler = Function::Create(printfType, GlobalValue::ExternalLinkage, "lowfat_iof_error", M);
@@ -2630,46 +2665,12 @@ static void insert_iof_handler(Module *M) {
                             rightName = rightName.substr(0, pos);
                         }
 
-                        errs()<<"__ubsan_handle_add_overflow "<<leftName<<" "<<rightName<<"\n";
+                        Constant *leftGEP = insertGlobalStrAndGenGEP(M, leftName);
+                        Constant *rightGEP = insertGlobalStrAndGenGEP(M, rightName);
 
-                        Constant *leftNameConst = ConstantDataArray::getString(M->getContext(), leftName, true);
-
-                        size_t leftLen = leftName.length() + 1;
-
-                        Type *leftArrType = ArrayType::get(IntegerType::get(M->getContext(), 8), leftLen);
-                        GlobalVariable *leftGV = new GlobalVariable(*M,
-                                                                    leftArrType,
-                                                                    true,
-                                                                    GlobalValue::PrivateLinkage,
-                                                                    leftNameConst,
-                                                                    ".str");
-                        leftGV->setAlignment(1);
-
-                        ConstantInt *zero = ConstantInt::get(M->getContext(), APInt(32, StringRef("0"), 10));
-
-                        std::vector<Constant *> indices;
-                        indices.push_back(zero);
-                        indices.push_back(zero);
-
-                        Constant *leftGEP = ConstantExpr::getGetElementPtr(leftArrType, leftGV, indices);
-
-                        Constant *rightNameConst = ConstantDataArray::getString(M->getContext(), rightName, true);
-
-                        size_t rightLen = rightName.length() + 1;
-
-                        Type *rightArrType = ArrayType::get(IntegerType::get(M->getContext(), 8), rightLen);
-                        GlobalVariable *rightGV = new GlobalVariable(*M,
-                                                                    rightArrType,
-                                                                    true,
-                                                                    GlobalValue::PrivateLinkage,
-                                                                    rightNameConst,
-                                                                    ".str");
-                        rightGV->setAlignment(1);
-
-                        Constant *rightGEP = ConstantExpr::getGetElementPtr(rightArrType, rightGV, indices);
-
-                        builder.CreateCall(handler, {data, leftGEP, rightGEP, ConstantInt::get(IntegerType::get(M->getContext(), 32), 0)});
+                        builder.CreateCall(handler, {data, leftGEP, rightGEP, ConstantInt::get(IntegerType::get(M->getContext(), 8), op)});
                     }
+
                 }
             } // end for I : BB
 

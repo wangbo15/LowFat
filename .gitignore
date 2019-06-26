@@ -19,3 +19,7 @@ test/*.a
 test/*.so
 
 llvm-4.0.0.src/projects/compiler-rt/lib/lowfat/CMakeLists.txt
+llvm-4.0.0.src/lib/Transforms/Instrumentation/lowfat.h
+llvm-4.0.0.src/lib/Transforms/Instrumentation/lowfat_config.h
+llvm-4.0.0.src/lib/Transforms/Instrumentation/lowfat_config.inc
+llvm-4.0.0.src/tools/clang/lib/Basic/lowfat_config.h

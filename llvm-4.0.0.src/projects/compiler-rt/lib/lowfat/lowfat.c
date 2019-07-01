@@ -681,9 +681,10 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
 
                 fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s\n", ptr_name, name, location);
 
-                //FILE* output = fopen("./sanitizer.out", "w+");
-                //fprintf(output, "%s#(%s < %s)\n", location, ptr_name, name);
-                //fclose(output);
+                FILE* output = fopen("/tmp/cfc.out", "w");
+                fprintf(output, "%s#(%s < %s)\n", location, ptr_name, name);
+                fclose(output);
+                fprintf(stderr, "Constraint has been written to /tmp/cfc.out\n");
             }
 
         }

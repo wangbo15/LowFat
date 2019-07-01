@@ -2075,68 +2075,100 @@ static void initializeGlobalHead(Module* M,
 
 static string get_va_nm_tp(Function *F, Value *param, map<Value *, string> &valueNameMap){
 
-    int instCount = 0;
-    for (BasicBlock& BB : *F) {
-        instCount += std::distance(BB.begin(), BB.end());
+
+    if(ConstantInt* CI = dyn_cast<ConstantInt>(param)){
+        string type = typeToStr(param->getType());
+        return std::to_string(*CI->getValue().getRawData()) + "#" + type;
     }
 
-    int i = 0;
-
-    while(i < instCount){
-        i++;
-
-        //errs()<<"----------------------\n";
-        //param->dump();
-
-        if(valueNameMap.count(param)){
-            return valueNameMap[param];
-        } else {
-
-            if(BitCastInst* bc = dyn_cast<BitCastInst>(param)){
-                param = dyn_cast<Value>(bc->getOperand(0));
-                continue;
-            }
-            if(AllocaInst* al = dyn_cast<AllocaInst>(param)){
-                param = al->getArraySize();
-                continue;
-            }
-            if(CastInst* castInst = dyn_cast<CastInst>(param)){
-                //errs()<<"CastInst \n";
-                //castInst->getOperand(0)->dump();
-                //castInst->getOperand(0)->getType()->dump();
-
-                if(isa<ConstantInt>(castInst->getOperand(0))){
-                    break;
-                } else {
-                    param = castInst->getOperand(0);
-                    continue;
-                }
-            }
-            if(CallInst* call = dyn_cast<CallInst>(param)){
-                if(call->getCalledFunction()->getName().str() == "lowfat_base"){
-                    param = call->getArgOperand(0);
-                    continue;
-                }
-                if(call->getNumUses() == 2){ // TODO
-                    for(User *U : call->users()){
-                        //errs()<<"======\n";
-                        //U->dump();
-                        if (auto I = dyn_cast<BitCastInst>(U)){
-                            param = I;
-                            i--;
-                        }
-                    }
-                }
-
-            }
-
-        }
-    }
+    //errs()<<"----------------------\n";
+    //param->dump();
 
     static int counter = 0;
 
     string tmp_name = "tmp_" + F->getName().str() + "_" + std::to_string(counter);
     counter++;
+
+    if(valueNameMap.count(param)){
+        return valueNameMap[param];
+    }
+
+    if(BitCastInst* bc = dyn_cast<BitCastInst>(param)){
+        param = dyn_cast<Value>(bc->getOperand(0));
+        return get_va_nm_tp(F, param, valueNameMap);
+    }
+    if(AllocaInst* al = dyn_cast<AllocaInst>(param)){
+        param = al->getArraySize();
+        return get_va_nm_tp(F, param, valueNameMap);
+    }
+    if(CastInst* castInst = dyn_cast<CastInst>(param)){
+        //errs()<<"CastInst \n";
+        //castInst->getOperand(0)->dump();
+        //castInst->getOperand(0)->getType()->dump();
+
+        if(isa<ConstantInt>(castInst->getOperand(0))){
+            return tmp_name + "_CONSTINT";
+        } else {
+            param = castInst->getOperand(0);
+            return get_va_nm_tp(F, param, valueNameMap);
+        }
+    }
+    if(CallInst* call = dyn_cast<CallInst>(param)){
+        if(call->getCalledFunction()->getName().str() == "lowfat_base"){
+            param = call->getArgOperand(0);
+            return get_va_nm_tp(F, param, valueNameMap);
+        }
+        if(call->getNumUses() == 2){ // TODO
+            for(User *U : call->users()){
+                //errs()<<"======\n";
+                //U->dump();
+                if (auto I = dyn_cast<BitCastInst>(U)){
+                    param = I;
+                    return get_va_nm_tp(F, param, valueNameMap);
+                }
+            }
+        }
+
+    }
+    if(BinaryOperator* bo = dyn_cast<BinaryOperator>(param)){
+        Value* left = bo->getOperand(0);
+        Value* right = bo->getOperand(1);
+
+        string leftName = get_va_nm_tp(F, left, valueNameMap);
+        std::size_t idx = leftName.find("#");
+        if(idx != std::string::npos) {
+            leftName = leftName.substr(0, idx);
+        }
+
+        string rightName = get_va_nm_tp(F, right, valueNameMap);
+        idx = rightName.find("#");
+        if(idx != std::string::npos) {
+            rightName = rightName.substr(0, idx);
+        }
+
+
+        switch (bo->getOpcode()) {
+            case Instruction::Add:
+                return "(" + leftName + " + " + rightName + ")";
+            case Instruction::Sub:
+                return "(" + leftName + " - " + rightName + ")";
+            case Instruction::Mul:
+                return "(" + leftName + " * " + rightName + ")";
+            case Instruction::SDiv:
+            case Instruction::UDiv:
+                return "(" + leftName + " / " + rightName + ")";
+            case Instruction::SRem:
+            case Instruction::URem:
+                return "(" + leftName + " % " + rightName + ")";
+            default:
+            {
+
+            }
+        }
+    }
+
+
+
     return tmp_name;
 }
 
@@ -2405,6 +2437,7 @@ static void replace_oob_checker(Module *M){
             continue;
 
         //errs()<<"================= "<<F.getName()<<"\n";
+        //if(F.getName().str() != "t2p_readwrite_pdf_image_tile") { continue;  }
 
         for (auto &BB: F) {
 
@@ -2445,6 +2478,14 @@ static void replace_oob_checker(Module *M){
                                 offset = gptr->getOperand(2);
                             }
 
+                            bool skip = true;
+                            if(BinaryOperator* BO = dyn_cast<BinaryOperator>(offset)){
+                                if(BO->getOpcode() == Instruction::Sub){
+                                    skip = false;
+                                }
+                            }
+                            if(skip) { continue; }
+
                             //offset->dump();
                             //errs()<<"PROCESSING OFFSET\n";
 
@@ -2457,8 +2498,9 @@ static void replace_oob_checker(Module *M){
                             }
 
                             size_t pos = ptr_name.find("#");
-
-                            ptr_name = ptr_name.substr(0, pos);
+                            if(pos != string::npos){
+                                ptr_name = ptr_name.substr(0, pos);
+                            }
 
                             //base->dump();
                             //errs()<<"PROCESSING BASE\n";

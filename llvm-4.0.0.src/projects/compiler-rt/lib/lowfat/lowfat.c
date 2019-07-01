@@ -675,10 +675,9 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
                 int len = strlen(global_head->name);
                 int i = strcspn (global_head->name, "#");
                 char name[len + 1];
-                if(i < len){
-                    strncpy(name, global_head->name, i);
-                    name[i] = '\0';
-                }
+                name[0] = '\0';
+                strncpy(name, global_head->name, i);
+                name[i] = '\0';
 
                 fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s\n", ptr_name, name, location);
 

@@ -141,7 +141,7 @@ any_t BASE2PTR_MAP = NULL;
 
 extern void lowfat_insert_map(size_t requiredSize, void* ptr, MALLOC_LIST_HEAD* global_head){
 
-    //fprintf(stderr, "lowfat_insert_map %zu, PTR: %p => GLOBAL_HEAD: %p\n", requiredSize, ptr, global_head);
+    //fprintf(stderr, "lowfat_insert_map %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s\n", requiredSize, lowfat_base(ptr), global_head, global_head->name);
 
     (global_head->time)++;
 

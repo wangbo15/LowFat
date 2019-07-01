@@ -11,16 +11,6 @@
 
 LEGACY=no
 BUILD_PLUGIN=no
-VERSION=`cat VERSION`
-if [ $LEGACY = yes ]
-then
-    VERSION=${VERSION}-LEGACY
-fi
-if [ $# != 0 ]
-then
-    VERSION=${VERSION}-CUSTOM
-fi
-RELEASE_NAME=lowfat-$VERSION
 
 build_llvm()
 {
@@ -74,15 +64,9 @@ build_llvm()
     if [ x$CONFIGURE = xtrue ]
     then
         CC=$CLANG CXX=$CLANGXX cmake ../llvm-4.0.0.src/ \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=install \
-            -DBUILD_SHARED_LIBS=ON \
-            -DLLVM_TARGETS_TO_BUILD="X86" \
-            -DLLVM_BUILD_TOOLS=OFF
+            -DCMAKE_BUILD_TYPE=Release
     fi
-    make -j `nproc` install install-clang
-    rm -rf "../$RELEASE_NAME"
-    mv install "../$RELEASE_NAME"
+    make -j `nproc`
     cd ..
     echo
 
@@ -298,10 +282,6 @@ cp config/lowfat-ptr-info $BUILD_PATH/bin/
 #    exit 1
 #fi
 
-
-echo -e "${GREEN}$0${OFF}: building release package..."
-rm -f "$RELEASE_NAME.tar.xz"
-tar cvJ --owner root --group root -f "$RELEASE_NAME.tar.xz" "$RELEASE_NAME"
 
 echo -e "${GREEN}$0${OFF}: build is complete!"
 echo -e \

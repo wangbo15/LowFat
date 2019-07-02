@@ -2634,6 +2634,121 @@ static void memory_overlap_check(Module *M) {
     }
 }
 
+static Constant* insertGlobalStrAndGenGEP(Module *M, string str){
+    Constant *NameConst = ConstantDataArray::getString(M->getContext(), str, true);
+
+    size_t len = str.length() + 1;
+
+    Type *ArrType = ArrayType::get(IntegerType::get(M->getContext(), 8), len);
+    GlobalVariable *GV = new GlobalVariable(*M,
+                                                ArrType,
+                                                true,
+                                                GlobalValue::PrivateLinkage,
+                                                NameConst,
+                                                ".str");
+    GV->setAlignment(1);
+
+    ConstantInt *zero = ConstantInt::get(M->getContext(), APInt(32, StringRef("0"), 10));
+
+    std::vector<Constant *> indices;
+    indices.push_back(zero);
+    indices.push_back(zero);
+
+    Constant *GEP = ConstantExpr::getGetElementPtr(ArrType, GV, indices);
+    return GEP;
+}
+
+static void insert_iof_handler(Module *M) {
+    for(auto &F: *M){
+        if (F.isDeclaration())
+            continue;
+
+        std::map<Value *, string> valueNameMap = collect_local_variable_metadata(F);
+
+        string fnameStr = F.getName().str();
+        Constant *FNameGEP = nullptr;
+
+
+        for (auto &BB: F){
+            for (auto &I: BB){
+                if(CallInst *call = dyn_cast<CallInst>(&I)) {
+                    Function *called = call->getCalledFunction();
+                    if (called == nullptr || !called->hasName()) {
+                        continue;
+                    }
+                    const string &Name = called->getName().str();
+                    bool needInsert = false;
+                    char op = 0;
+                    if (Name == "__ubsan_handle_add_overflow") {
+                        needInsert = true;
+                        op = '+';
+                    } else if (Name == "__ubsan_handle_sub_overflow") {
+                        needInsert = true;
+                        op = '-';
+                    } else if (Name == "__ubsan_handle_mul_overflow") {
+                        needInsert = true;
+                        op = '*';
+                    } else if (Name == "__ubsan_handle_divrem_overflow") {
+                        needInsert = true;
+                        op = '/';
+                    }
+
+                    if(needInsert){
+                        IRBuilder<> builder(&I);
+
+                        Function* handler = M->getFunction("lowfat_arith_error");
+                        if (!handler) {
+                            std::vector<Type*> typeVec;
+                            // void * Data
+                            typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+                            // char* fname
+                            typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+                            // char * left
+                            typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+                            // char * right
+                            typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+                            // char opcode
+                            typeVec.push_back(IntegerType::get(M->getContext(), 8));
+
+                            FunctionType* printfType = FunctionType::get(builder.getVoidTy(), typeVec, true);
+                            handler = Function::Create(printfType, GlobalValue::ExternalLinkage, "lowfat_arith_error", M);
+                            handler->setCallingConv(CallingConv::C);
+                        }
+
+                        Value* data = call->getArgOperand(0);
+
+                        string leftName = get_va_nm_tp(&F, call->getArgOperand(1), valueNameMap);
+
+                        size_t pos = leftName.find("#");
+                        if(pos != string::npos){
+                            leftName = leftName.substr(0, pos);
+                        }
+
+                        string rightName = get_va_nm_tp(&F, call->getArgOperand(2), valueNameMap);
+                        pos = rightName.find("#");
+                        if(pos != string::npos){
+                            rightName = rightName.substr(0, pos);
+                        }
+
+                        if(!FNameGEP){
+                            FNameGEP = insertGlobalStrAndGenGEP(M, fnameStr);
+                        }
+
+                        Constant *leftGEP = insertGlobalStrAndGenGEP(M, leftName);
+                        Constant *rightGEP = insertGlobalStrAndGenGEP(M, rightName);
+
+                        builder.CreateCall(handler, {data, FNameGEP, leftGEP, rightGEP, ConstantInt::get(IntegerType::get(M->getContext(), 8), op)});
+                    }
+
+                }
+            } // end for I : BB
+
+        } // end for BB : F
+    } // end for F: M
+
+}
+
+
 /*
  * LowFat LLVM Pass
  */
@@ -2770,11 +2885,12 @@ struct LowFat : public ModulePass
         if(option_symbolize){
             symbolize(&M);
             replace_oob_checker(&M);
-        }
 
-        //#if(defined LOWFAT_REVERSE_MEM_LAYOUT && defined LOWFAT_MEMCPY_CHECK)
-        memory_overlap_check(&M);
-        //#endif
+            memory_overlap_check(&M);
+
+            // integer overflow handler
+            insert_iof_handler(&M);
+        }
 
         if (option_debug)
         {

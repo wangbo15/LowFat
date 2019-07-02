@@ -76,6 +76,8 @@ static LOWFAT_DATA char **lowfat_envp = NULL;
 #endif
 #endif
 
+#include "lowfat_ds.h"
+
 static LOWFAT_DATA lowfat_mutex_t lowfat_print_mutex;
 static LOWFAT_DATA size_t lowfat_num_messages = 0;
 
@@ -502,6 +504,85 @@ static LOWFAT_NOINLINE const char *lowfat_error_kind(unsigned info)
             return "unknown";
     }
 }
+
+#define TK_Integer 0x0000
+#define TK_Float 0x0001
+#define K_Unknown 0xffff
+
+static unsigned getIntegerBitWidth(LOWFAT_TYPE_DESC* typeDesc) {
+    return 1 << (typeDesc->TypeInfo >> 1);
+}
+
+static int isSignedIntegerTy(LOWFAT_TYPE_DESC* typeDesc) {
+    return typeDesc->TypeKind == TK_Integer && (typeDesc->TypeInfo & 1);
+}
+
+static char* getTypeName(LOWFAT_TYPE_DESC* typeDesc){
+    if(typeDesc->TypeKind == TK_Integer){
+        unsigned width = getIntegerBitWidth(typeDesc);
+
+        char res[20];
+        if(!isSignedIntegerTy(typeDesc)){
+            strcpy(res, "unsigned ");
+        }
+        char *type;
+        if(width == sizeof(char) * 8){
+            type = "char";
+        } else if(width == sizeof(short) * 8){
+            type = "short";
+        } else if(width == sizeof(int) * 8){
+            type = "int";
+        } else if (width == sizeof(long) * 8) {
+            type = "long";
+        } else {
+            lowfat_error("ERROR INT TYPE\n");
+        }
+        strcat(res, type);
+        return res;
+    } else if (typeDesc->TypeKind == TK_Float){
+        // skip float types
+        return "";
+    } else {
+        lowfat_error("ERROR TYPE\n");
+    }
+}
+
+
+extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fname, const char* left, const char* right, const char opcode){
+    LOWFAT_OVERFLOW_DATA* overflowData = (LOWFAT_OVERFLOW_DATA*) Data;
+
+    LOWFAT_SRC_LOC loc = overflowData->Loc;
+
+    LOWFAT_TYPE_DESC* typeDesc = overflowData->Type;
+
+    char* type = getTypeName(typeDesc);
+
+    //fprintf(stderr, "LOWFAT IOF CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s:%s:%s\n", ptr_name, name, loc.Filename, fname, loc.Line);
+
+    if(opcode == '/'){
+        lowfat_error(
+                "divide-by-zero error detected!\n"
+                "\tfile = %s\n"
+                "\tfunc = %s\n"
+                "\tline = %d\n"
+                "\tcol  = %d\n"
+                "\tzero = %s  \n"
+                "\ttype = %s\n",
+                loc.Filename, fname, loc.Line, loc.Column, right, type);
+    } else {
+        lowfat_error(
+                "integer-over-flow error detected!\n"
+                "\tfile = %s\n"
+                "\tfunc = %s\n"
+                "\tline = %d\n"
+                "\tcol  = %d\n"
+                "\toper = %s %c % s \n"
+                "\ttype = %s\n",
+                loc.Filename, fname, loc.Line, loc.Column, left, opcode, right, type);
+    }
+
+}
+
 
 extern LOWFAT_NORETURN void lowfat_oob_error(unsigned info,
     const void *ptr, const void *baseptr)

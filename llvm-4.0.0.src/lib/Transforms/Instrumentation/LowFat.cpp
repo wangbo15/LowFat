@@ -2613,6 +2613,10 @@ static void insert_iof_handler(Module *M) {
 
         std::map<Value *, string> valueNameMap = collect_local_variable_metadata(F);
 
+        string fnameStr = F.getName().str();
+        Constant *FNameGEP = nullptr;
+
+
         for (auto &BB: F){
             for (auto &I: BB){
                 if(CallInst *call = dyn_cast<CallInst>(&I)) {
@@ -2632,21 +2636,30 @@ static void insert_iof_handler(Module *M) {
                     } else if (Name == "__ubsan_handle_mul_overflow") {
                         needInsert = true;
                         op = '*';
+                    } else if (Name == "__ubsan_handle_divrem_overflow") {
+                        needInsert = true;
+                        op = '/';
                     }
 
                     if(needInsert){
                         IRBuilder<> builder(&I);
 
-                        Function* handler = M->getFunction("lowfat_iof_error");
+                        Function* handler = M->getFunction("lowfat_arith_error");
                         if (!handler) {
                             std::vector<Type*> typeVec;
+                            // void * Data
                             typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+                            // char* fname
                             typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+                            // char * left
                             typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+                            // char * right
+                            typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+                            // char opcode
                             typeVec.push_back(IntegerType::get(M->getContext(), 8));
 
                             FunctionType* printfType = FunctionType::get(builder.getVoidTy(), typeVec, true);
-                            handler = Function::Create(printfType, GlobalValue::ExternalLinkage, "lowfat_iof_error", M);
+                            handler = Function::Create(printfType, GlobalValue::ExternalLinkage, "lowfat_arith_error", M);
                             handler->setCallingConv(CallingConv::C);
                         }
 
@@ -2665,10 +2678,14 @@ static void insert_iof_handler(Module *M) {
                             rightName = rightName.substr(0, pos);
                         }
 
+                        if(!FNameGEP){
+                            FNameGEP = insertGlobalStrAndGenGEP(M, fnameStr);
+                        }
+
                         Constant *leftGEP = insertGlobalStrAndGenGEP(M, leftName);
                         Constant *rightGEP = insertGlobalStrAndGenGEP(M, rightName);
 
-                        builder.CreateCall(handler, {data, leftGEP, rightGEP, ConstantInt::get(IntegerType::get(M->getContext(), 8), op)});
+                        builder.CreateCall(handler, {data, FNameGEP, leftGEP, rightGEP, ConstantInt::get(IntegerType::get(M->getContext(), 8), op)});
                     }
 
                 }

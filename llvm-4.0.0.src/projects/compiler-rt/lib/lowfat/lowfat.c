@@ -548,7 +548,7 @@ static char* getTypeName(LOWFAT_TYPE_DESC* typeDesc){
 }
 
 
-extern LOWFAT_NORETURN void lowfat_iof_error(const void *Data, const char* fname, const char* left, const char* right, const char opcode){
+extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fname, const char* left, const char* right, const char opcode){
     LOWFAT_OVERFLOW_DATA* overflowData = (LOWFAT_OVERFLOW_DATA*) Data;
 
     LOWFAT_SRC_LOC loc = overflowData->Loc;
@@ -557,16 +557,30 @@ extern LOWFAT_NORETURN void lowfat_iof_error(const void *Data, const char* fname
 
     char* type = getTypeName(typeDesc);
 
-    fprintf(stderr, "LOWFAT IOF CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s:%s:%s\n", ptr_name, name, loc.Filename, fname, loc.Line);
+    //fprintf(stderr, "LOWFAT IOF CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s:%s:%s\n", ptr_name, name, loc.Filename, fname, loc.Line);
 
-    lowfat_error(
-            "integer-over-flow error detected!\n"
-            "\tfile = %s\n"
-            "\tline = %d\n"
-            "\tcol  = %d\n"
-            "\toper = %s %c % s \n"
-            "\ttype = %s\n",
-            loc.Filename, loc.Line, loc.Column, left, opcode, right, type);
+    if(opcode == '/'){
+        lowfat_error(
+                "divide-by-zero error detected!\n"
+                "\tfile = %s\n"
+                "\tfunc = %s\n"
+                "\tline = %d\n"
+                "\tcol  = %d\n"
+                "\tzero = %s  \n"
+                "\ttype = %s\n",
+                loc.Filename, fname, loc.Line, loc.Column, right, type);
+    } else {
+        lowfat_error(
+                "integer-over-flow error detected!\n"
+                "\tfile = %s\n"
+                "\tfunc = %s\n"
+                "\tline = %d\n"
+                "\tcol  = %d\n"
+                "\toper = %s %c % s \n"
+                "\ttype = %s\n",
+                loc.Filename, fname, loc.Line, loc.Column, left, opcode, right, type);
+    }
+
 }
 
 

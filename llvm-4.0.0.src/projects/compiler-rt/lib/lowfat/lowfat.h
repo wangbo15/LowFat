@@ -141,9 +141,9 @@ static inline _LOWFAT_CONST _LOWFAT_INLINE size_t lowfat_buffer_size(//TODO for 
 
 
 /*
- * Report an integer-overflow error and abort execution.
+ * Report an arithmetic error, including integer-overflow and divide-by-zero.
  */
-extern _LOWFAT_NORETURN void lowfat_iof_error(const void *Data, const char* left, const char* right, const char opcode);
+extern _LOWFAT_NORETURN void lowfat_arith_error(const void *Data,  const char* fname, const char* left, const char* right, const char opcode);
 
 /*
  * Report an out-of-bounds memory error and abort execution.

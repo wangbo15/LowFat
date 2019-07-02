@@ -666,9 +666,10 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
         ssize_t overflow = (ssize_t)ptr - (ssize_t) baseptr;
 
         if(GLB_PTR_MAP != NULL){
-            size_t value = map_get(GLB_PTR_MAP, (size_t) lowfat_base(baseptr));
+            size_t lf_base = (size_t) lowfat_base(baseptr);
+            size_t value = map_get(GLB_PTR_MAP, lf_base);
             if(value == 0x0){
-                fprintf(stderr, "lowfat_oob_error MAP_MISSING, MAP SIZE: %d\n", map_size(GLB_PTR_MAP));
+                fprintf(stderr, "lowfat_oob_check_verbose MAP_MISSING, LOWFAT BASE: %p, MAP SIZE: %d\n", lf_base, map_size(GLB_PTR_MAP));
             } else{
                 MALLOC_LIST_HEAD* global_head = (MALLOC_LIST_HEAD*) value;
 

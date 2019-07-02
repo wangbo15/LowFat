@@ -2130,6 +2130,17 @@ static string get_va_nm_tp(Function *F, Value *param, map<Value *, string> &valu
         }
 
     }
+    if(LoadInst* load = dyn_cast<LoadInst>(param)){
+        param = load->getPointerOperand();
+        return get_va_nm_tp(F, param, valueNameMap);
+    }
+
+    if(PHINode* phi = dyn_cast<PHINode>(param)){
+
+        phi->getIncomingValue(0);
+
+
+    }
     if(BinaryOperator* bo = dyn_cast<BinaryOperator>(param)){
         Value* left = bo->getOperand(0);
         Value* right = bo->getOperand(1);
@@ -2437,7 +2448,7 @@ static void replace_oob_checker(Module *M){
             continue;
 
         //errs()<<"================= "<<F.getName()<<"\n";
-        //if(F.getName().str() != "t2p_readwrite_pdf_image_tile") { continue;  }
+        //if(F.getName().str() != "cpStrips") { continue;  }
 
         for (auto &BB: F) {
 
@@ -2478,16 +2489,7 @@ static void replace_oob_checker(Module *M){
                                 offset = gptr->getOperand(2);
                             }
 
-                            bool skip = true;
-                            if(BinaryOperator* BO = dyn_cast<BinaryOperator>(offset)){
-                                if(BO->getOpcode() == Instruction::Sub){
-                                    skip = false;
-                                }
-                            }
-                            if(skip) { continue; }
 
-                            //offset->dump();
-                            //errs()<<"PROCESSING OFFSET\n";
 
                             string ptr_name;
                             if(ConstantInt* CI = getConstantIntVal(offset)){
@@ -2502,16 +2504,24 @@ static void replace_oob_checker(Module *M){
                                 ptr_name = ptr_name.substr(0, pos);
                             }
 
-                            //base->dump();
-                            //errs()<<"PROCESSING BASE\n";
-
                             string base_name = get_va_nm_tp(&F, base, valueNameMap);
+
+                            errs()<<"PROCESSING OFFSET:\n";
+                            offset->dump();
+                            errs()<<"OFFSET NAME: "<<ptr_name<<"\n";
+
+                            errs()<<"PROCESSING BASE\n";
+                            base->dump();
+                            errs()<<"BASE NAME: "<<base_name<<"\n";
+
 
                             pos = base_name.find("#");
 
                             if(pos == string::npos){
                                 errs()<<"ILLEGAL BASE NAME: "<<base_name<<"\n";
+                                errs()<<"CURRENT CALL INST:\n";
                                 call->dump();
+                                errs()<<"CURRENT BASE PTR:\n";
                                 base->dump();
                                 continue;
                             }

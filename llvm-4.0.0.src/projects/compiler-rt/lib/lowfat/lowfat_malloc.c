@@ -129,6 +129,8 @@ extern void *lowfat_malloc(size_t size)
 //    disable = false;
 #endif
 
+    fprintf(stderr, "lowfat_malloc: PTR: %p , BASE: %p, SIZE: %u\n", result, lowfat_base(result), size);
+
 	return result;
 }
 
@@ -172,6 +174,7 @@ extern void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head)
 {
     void* result = lowfat_malloc(size);
     lowfat_insert_map(size, result, global_head);
+
     return result;
 }
 

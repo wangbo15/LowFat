@@ -1076,6 +1076,15 @@ static void getInterestingInsts(const TargetLibraryInfo *TLI,
 static void insertBoundsCheck(const DataLayout *DL, Instruction *I, Value *Ptr,
     unsigned info, const PtrInfo &baseInfo)
 {
+
+    const DebugLoc &location = I->getDebugLoc();
+
+    if(!location)
+    {	
+        return;
+    }
+
+
     IRBuilder<> builder(I);
     auto i = baseInfo.find(Ptr);
     if (i == baseInfo.end())
@@ -1114,7 +1123,6 @@ static void insertBoundsCheck(const DataLayout *DL, Instruction *I, Value *Ptr,
         builder.getInt64Ty(), builder.getInt8PtrTy(), builder.getInt8PtrTy(), nullptr);
 
 
-    const DebugLoc &location = I->getDebugLoc();
     size_t line = location.getLine();
     string message = I->getModule()->getName().str() + ":" + to_string(line);
 
@@ -2519,6 +2527,13 @@ static void replace_oob_checker(Module *M){
                             string ptr_type = base_name.substr(pos + 1);
 
                             const DebugLoc &location = call->getDebugLoc();
+
+                            if(!location)
+                            {
+                                errs()<<"NO DEBUG INFO !!!!\n";
+                                continue;
+                            }
+
                             int line = location.getLine();
                             string loc = M->getName().str() + ":" + F.getName().str() + ":" + to_string(line);
 
@@ -2593,6 +2608,10 @@ static void memory_overlap_check(Module *M) {
                                                builder.getInt8PtrTy(), nullptr);
 
                     const DebugLoc &location = I.getDebugLoc();
+                    if(!location){
+                        continue;
+                    }
+
                     int line = location.getLine();
                     string loc = M->getName().str() + ":" + to_string(line);
 

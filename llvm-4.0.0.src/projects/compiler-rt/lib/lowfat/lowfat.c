@@ -713,23 +713,6 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
     char* ptr_type = arr[1];
     char* location = arr[2];
 
-    #if 0
-    int ptr_width;
-    if(strcmp(ptr_type, "i8*") == 0){
-        ptr_width = 1;
-    } else if (strcmp(ptr_type, "i32*") == 0){
-        ptr_width = 4;
-    } else if (strcmp(ptr_type, "i64*") == 0){
-        ptr_width = 8;
-    } else if (strcmp(ptr_type, "i128*") == 0){
-        ptr_width = 16;
-    } else {
-        //TODO:
-        //fprintf(stderr, "ERROR MESSAGE FORMAT: %s\n", ptr_type);
-        //abort();
-    }
-    #endif
-
     size_t size = lowfat_size(baseptr);
     size_t diff;
 

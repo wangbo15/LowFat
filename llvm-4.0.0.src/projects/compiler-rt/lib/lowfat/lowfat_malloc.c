@@ -111,25 +111,26 @@ extern void *lowfat_malloc_index(size_t idx, size_t size);
 extern void *lowfat_malloc(size_t size)
 {
     size_t idx = lowfat_heap_select(size);
-
     static bool disable = false;
     if (disable)
         return __libc_malloc(size);
 
     void* result = lowfat_malloc_index(idx, size);
 
-
 #if LOWFAT_REVERSE_MEM_LAYOUT
-    if(idx != 0){
+    if(idx != 0)
+    {
         size_t alloc_size = LOWFAT_SIZES[idx];
         result = (uint8_t *)result + (alloc_size - size);
     }
-//    disable = true;
-//    fprintf(stderr, "BASE: %p, RES: %p, IDX: %zu, APPLY: %zu, SIZE: %zu\n", lowfat_base(result), result, idx, size, LOWFAT_SIZES[idx]);
-//    disable = false;
+
 #endif
 
-    fprintf(stderr, "lowfat_malloc: PTR: %p , BASE: %p, SIZE: %u\n", result, lowfat_base(result), size);
+#if 0
+    disable = true;
+    fprintf(stderr, "BASE: %p, RES: %p, IDX: %zu, APPLY: %zu, SIZE: %zu\n", lowfat_base(result), result, idx, size, LOWFAT_SIZES[idx]);
+    disable = false;
+#endif
 
 	return result;
 }

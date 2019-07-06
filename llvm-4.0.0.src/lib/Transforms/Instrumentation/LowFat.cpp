@@ -64,6 +64,8 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ValueHandle.h"
 
+#include "llvm/IR/DebugInfo.h"
+
 extern "C"
 {
 #include "lowfat_config.inc"
@@ -1700,7 +1702,7 @@ static void makeGlobalVariableReverse(Module *M, GlobalVariable *GV, std::vector
 }
 
 static StructType* declear_global_types(Module* M);
-static string get_va_nm_tp(Function *F, Value *param, map<Value *, string> &valueNameMap);
+static string get_va_nm_tp(Function *F, Value *param, map<Value *, string> &valueNameMap, map<string, vector<pair<string, string>>> structInfo);
 static map<Value*, string> collect_local_variable_metadata(Function& F);
 static void initializeGlobalHead(Module* M,
         GlobalVariable *gvar_struct_head,
@@ -1726,6 +1728,8 @@ static void modifyMemsetAlign(Module &M){
 
     }
 }
+
+static map<string, vector<pair<string, string>>> analysisTypeInfo(Module &M);
 
 /*
  * Convert an alloca instruction into a low-fat-pointer.  This is a more
@@ -1921,10 +1925,11 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
             }
             val_name = rso.str();
         }else{
-            val_name = get_va_nm_tp(F, Alloca, valueNameMap);
+            map<string, vector<pair<string, string>>> structInfo = analysisTypeInfo(*M);
+            val_name = get_va_nm_tp(F, Alloca, valueNameMap, structInfo);
         }
 
-        errs()<<"ALLOCA --------------> "<<val_name<<"\n";
+        //errs()<<"ALLOCA --------------> "<<val_name<<"\n";
 
         // global name
         static int global_counter = 0;
@@ -2030,6 +2035,26 @@ static bool isBlacklisted(SpecialCaseList *SCL, Function *F)
 }
 
 
+/********************************************************************************************************/
+static bool endsWith(const std::string& str, const std::string& suffix)
+{
+    return str.size() >= suffix.size() && 0 == str.compare(str.size()-suffix.size(), suffix.size(), suffix);
+}
+
+static bool startsWith(const std::string& str, const std::string& prefix)
+{
+    return str.size() >= prefix.size() && 0 == str.compare(0, prefix.size(), prefix);
+}
+
+static string getPureType(const std::string& str){
+    size_t idx = str.find("*");
+    if(idx == string::npos){
+        return str;
+    }
+    return str.substr(0, idx);
+}
+
+
 static void initializeGlobalHead(Module* M,
         GlobalVariable *gvar_struct_head,
         string val_name,
@@ -2073,7 +2098,194 @@ static void initializeGlobalHead(Module* M,
     //gvar_struct_head->dump();
 }
 
-static string get_va_nm_tp(Function *F, Value *param, map<Value *, string> &valueNameMap){
+
+static pair<string, string> parseBaseAndType(string BT)
+{
+    size_t pos = BT.find("#");
+
+    if(pos == string::npos)
+    {
+        return pair<string, string>(BT, "");
+    }
+    string name = BT.substr(0, pos);
+    string type = BT.substr(pos + 1);
+    return pair<string, string>(name, type);
+}
+
+static map<DIType*, string> getTypedefInfo(Module &M){
+    DebugInfoFinder Finder;
+    Finder.processModule(M);
+    map<DIType*, string> typedefInfo;
+    for (auto i : Finder.types())
+    {
+        if(DIDerivedType* DT = dyn_cast<DIDerivedType>(i))
+        {
+            if (DT->getTag() == dwarf::DW_TAG_typedef)
+            {
+                if (DT->getBaseType())
+                {
+                    DIType *baseType = DT->getBaseType().resolve();
+                    typedefInfo[baseType] = DT->getName();
+                }
+            }
+        }
+    }
+    return typedefInfo;
+}
+
+static string DITypeToString(DIType* DIT, map<DIType*, string> &typedefMap)
+{
+    //DIT->dump();
+
+    if(DIBasicType* BT = dyn_cast<DIBasicType>(DIT))
+    {
+        return BT->getName().str();
+
+    } else if(DIDerivedType* DT = dyn_cast<DIDerivedType>(DIT))
+    {
+        if(DT->getBaseType())
+        {
+            //errs()<<DT->getBaseType().resolve()->getName()<<"\n";
+            //DIT->dump();
+            unsigned tag = DT->getTag();
+
+            if(tag == dwarf::DW_TAG_pointer_type)
+            {
+                return DITypeToString(DT->getBaseType().resolve(), typedefMap) + "*";
+            } else if(tag == dwarf::DW_TAG_typedef)
+            {
+                return DITypeToString(DT->getBaseType().resolve(), typedefMap);
+            }
+        }
+
+    } else if(DICompositeType* CT = dyn_cast<DICompositeType>(DIT))
+    {
+
+        unsigned tag = CT->getTag();
+        if(tag == dwarf::DW_TAG_structure_type)
+        {
+            string name = CT->getName().str();
+            if(name == "") {
+                if (typedefMap.find(CT) != typedefMap.end()) {
+                    name = typedefMap[CT];
+                } else {
+                    name = "UNKNOWN";
+                }
+            }
+
+            return name;
+        } else if (tag == dwarf::DW_TAG_array_type)
+        {
+            if(CT->getBaseType())
+            {
+                return DITypeToString(CT->getBaseType().resolve(), typedefMap) + "[]";
+            }
+        }
+    }
+
+    return "UNKNOWN";
+}
+
+
+static ConstantInt* getConstantIntVal(Value* val){
+    if(ConstantInt* cons = dyn_cast<ConstantInt>(val)){
+        return cons;
+    } else if(SExtInst* sext = dyn_cast<SExtInst>(val)){
+        return getConstantIntVal(sext->getOperand(0));
+    } else {
+        return nullptr;
+    }
+}
+
+
+static map<string, vector<pair<string, string>>> analysisTypeInfo(Module &M){
+    DebugInfoFinder Finder;
+    Finder.processModule(M);
+
+    map<string, vector<pair<string, string>>> structInfo;
+
+    map<DIType*, string> typedefInfo = getTypedefInfo(M);
+    for (auto i : Finder.types())
+    {
+        //errs()<<"\n";
+        //i->dump();
+
+        if(DIBasicType* BT = dyn_cast<DIBasicType>(i))
+        {
+            //errs()<<"DIBasicType >>>>> "<<BT->getName()<<"\n";
+        }
+
+        if(DICompositeType* CT = dyn_cast<DICompositeType>(i))
+        {
+            string typeName = CT->getName().str();
+            if(typeName == "")
+            {
+                if(typedefInfo.find(CT) != typedefInfo.end())
+                {
+                    typeName = typedefInfo[CT];
+                }
+            }
+
+            //errs()<<"DICompositeType >>>>> "<<typeName<<"\n";
+            structInfo[typeName] = vector<pair<string, string>>();
+        }
+
+        if(DIDerivedType* DT = dyn_cast<DIDerivedType>(i))
+        {
+            //errs()<<"DIDerivedType >>>>> "<<DT->getName()<<"\n";
+
+            if(DT->getTag() == dwarf::DW_TAG_member)
+            {
+
+                DIScope* scope = DT->getScope().resolve();
+
+                if(DICompositeType* PT = dyn_cast<DICompositeType>(scope))
+                {
+
+                    string key = PT->getName().str();
+                    if(key == ""){
+                        if(typedefInfo.find(PT) != typedefInfo.end()){
+                            key = typedefInfo[PT];
+                        }
+                    }
+
+                    pair<string, string> nameType;
+                    nameType.first = DT->getName().str();
+
+                    if(DT->getBaseType())
+                    {
+                        nameType.second = DITypeToString(DT->getBaseType().resolve(), typedefInfo);
+                    } else
+                    {
+                        nameType.second = "UNKOWN_MEMBER";
+                    }
+
+                    //errs()<<"MEMBER >>>>>>>>\n";
+                    //errs()<<nameType.first<<" : "<<nameType.second<<"\n";
+
+                    if(key != "")
+                        structInfo[key].push_back(nameType);
+                }
+            } else if(DT->getTag() == dwarf::DW_TAG_typedef)
+            {
+                if(DT->getBaseType()){
+                    DIType* baseType = DT->getBaseType().resolve();
+                    if(typedefInfo.find(baseType) == typedefInfo.end()){
+                        typedefInfo[baseType] = DT->getName();
+                    }
+                }
+            }
+        }
+    }
+    return structInfo;
+}
+
+
+static string get_va_nm_tp(Function *F,
+        Value *param,
+        map<Value *, string> &valueNameMap,
+        map<string, vector<pair<string, string>>> structInfo)
+{
 
 
     if(ConstantInt* CI = dyn_cast<ConstantInt>(param)){
@@ -2081,7 +2293,7 @@ static string get_va_nm_tp(Function *F, Value *param, map<Value *, string> &valu
         return std::to_string(*CI->getValue().getRawData()) + "#" + type;
     }
 
-    //errs()<<"----------------------\n";
+    //errs()<<"----------------------  get_va_nm_tp\n";
     //param->dump();
 
     static int counter = 0;
@@ -2093,72 +2305,174 @@ static string get_va_nm_tp(Function *F, Value *param, map<Value *, string> &valu
         return valueNameMap[param];
     }
 
-    if(BitCastInst* bc = dyn_cast<BitCastInst>(param)){
+    if(BitCastInst* bc = dyn_cast<BitCastInst>(param))
+    {
         param = dyn_cast<Value>(bc->getOperand(0));
-        return get_va_nm_tp(F, param, valueNameMap);
+        return get_va_nm_tp(F, param, valueNameMap, structInfo);
     }
-    if(AllocaInst* al = dyn_cast<AllocaInst>(param)){
+    if(AllocaInst* al = dyn_cast<AllocaInst>(param))
+    {
         param = al->getArraySize();
-        return get_va_nm_tp(F, param, valueNameMap);
+        return get_va_nm_tp(F, param, valueNameMap, structInfo);
     }
-    if(CastInst* castInst = dyn_cast<CastInst>(param)){
+    if(CastInst* castInst = dyn_cast<CastInst>(param))
+    {
         //errs()<<"CastInst \n";
         //castInst->getOperand(0)->dump();
         //castInst->getOperand(0)->getType()->dump();
 
-        if(isa<ConstantInt>(castInst->getOperand(0))){
+        if(isa<ConstantInt>(castInst->getOperand(0)))
+        {
             return tmp_name + "_CONSTINT";
-        } else {
+        } else
+        {
             param = castInst->getOperand(0);
-            return get_va_nm_tp(F, param, valueNameMap);
+            return get_va_nm_tp(F, param, valueNameMap, structInfo);
         }
     }
-    if(CallInst* call = dyn_cast<CallInst>(param)){
-        if(call->getCalledFunction()->getName().str() == "lowfat_base"){
-            param = call->getArgOperand(0);
-            return get_va_nm_tp(F, param, valueNameMap);
+    if(CallInst* call = dyn_cast<CallInst>(param))
+    {
+        if (!call->getCalledFunction())
+        {
+            return tmp_name;
         }
-        if(call->getNumUses() == 2){ // TODO
-            for(User *U : call->users()){
+        if(call->getCalledFunction()->getName().str() == "lowfat_base")
+        {
+            param = call->getArgOperand(0);
+            return get_va_nm_tp(F, param, valueNameMap, structInfo);
+        }
+        if(call->getNumUses() == 2)
+        { // TODO
+            for(User *U : call->users())
+            {
                 //errs()<<"======\n";
                 //U->dump();
-                if (auto I = dyn_cast<BitCastInst>(U)){
+                if (auto I = dyn_cast<BitCastInst>(U))
+                {
                     param = I;
-                    return get_va_nm_tp(F, param, valueNameMap);
+                    return get_va_nm_tp(F, param, valueNameMap, structInfo);
                 }
             }
         }
 
     }
-    if(LoadInst* load = dyn_cast<LoadInst>(param)){
+    if(LoadInst* load = dyn_cast<LoadInst>(param))
+    {
         param = load->getPointerOperand();
-        return get_va_nm_tp(F, param, valueNameMap);
+        return get_va_nm_tp(F, param, valueNameMap, structInfo);
+    }
+    if(GetElementPtrInst* GEP = dyn_cast<GetElementPtrInst>(param))
+    {
+        //TODO
+        Value* base = GEP->getPointerOperand();
+        string base_name_type = get_va_nm_tp(F, base, valueNameMap, structInfo);
+        pair<string, string> basePair = parseBaseAndType(base_name_type);
+
+
+        //errs()<<"base_name_type "<<base_name_type<<"\n";
+        //GEP->dump();
+
+        string base_name = basePair.first;
+        string base_type = basePair.second;
+
+        Value *offset = nullptr;
+        if(GEP->getNumOperands() == 2)
+        {
+            offset = GEP->getOperand(1);
+        }else if(GEP->getNumOperands() == 3)
+        {
+            offset = GEP->getOperand(2);
+        }
+
+        string ptr_name_type;
+        auto *PTy = dyn_cast<PointerType>(GEP->getPointerOperandType());
+
+        if(ConstantInt* CI = getConstantIntVal(offset))
+        {
+
+            uint64_t rawData = *(CI->getValue().getRawData());
+
+            if(PTy)
+            {
+
+                if(PTy->getPointerElementType()->isStructTy())
+                {
+                    // for struct member
+                    string connection;
+
+                    if(endsWith(base_type, "*"))
+                    {
+                        connection = "->";
+                        //TODO: only support One-Dimension pointer
+
+                    } else
+                    {
+                        connection = ".";
+                    }
+                    string baseRemovePointer = getPureType(base_type);
+
+                    if(structInfo.find(baseRemovePointer) != structInfo.end() && rawData < structInfo[baseRemovePointer].size())
+                    {
+                        string memberName = structInfo[baseRemovePointer][rawData].first;
+                        string memberType = structInfo[baseRemovePointer][rawData].second;
+                        ptr_name_type = base_name + connection + memberName + "#" + memberType;
+
+                        //errs()<<"ptr_name_type: "<< ptr_name_type <<"  base_type: "<<base_type<<"\n";
+
+                        return ptr_name_type;
+                    } else
+                    {
+                        errs()<<">>>>>>>>> unknown struct information: "<<base_type<<" IDX: "<<rawData<<"\n";
+                        return tmp_name;
+                    }
+
+                } else
+                {
+                    //TODO
+                    // for array constant index
+                    ptr_name_type = base_name + "[" + std::to_string(*(CI->getValue().getRawData())) + "]#UNKNOWNTYPE";
+                    return ptr_name_type;
+                }
+
+            } else
+            {
+                return tmp_name;
+            }
+
+        }
+        else
+        {
+            // TODO
+            return get_va_nm_tp(F, offset, valueNameMap, structInfo);
+        }
     }
 
-    if(PHINode* phi = dyn_cast<PHINode>(param)){
-
-        phi->getIncomingValue(0);
-
-
+    if(PHINode* phi = dyn_cast<PHINode>(param))
+    {
+        //TODO
+        return tmp_name;
     }
-    if(BinaryOperator* bo = dyn_cast<BinaryOperator>(param)){
+    if(BinaryOperator* bo = dyn_cast<BinaryOperator>(param))
+    {
         Value* left = bo->getOperand(0);
         Value* right = bo->getOperand(1);
 
-        string leftName = get_va_nm_tp(F, left, valueNameMap);
+        string leftName = get_va_nm_tp(F, left, valueNameMap, structInfo);
         std::size_t idx = leftName.find("#");
         if(idx != std::string::npos) {
             leftName = leftName.substr(0, idx);
         }
 
-        string rightName = get_va_nm_tp(F, right, valueNameMap);
+        string rightName = get_va_nm_tp(F, right, valueNameMap, structInfo);
         idx = rightName.find("#");
-        if(idx != std::string::npos) {
+        if(idx != std::string::npos)
+        {
             rightName = rightName.substr(0, idx);
         }
 
 
-        switch (bo->getOpcode()) {
+        switch (bo->getOpcode())
+        {
             case Instruction::Add:
                 return "(" + leftName + " + " + rightName + ")";
             case Instruction::Sub:
@@ -2178,18 +2492,28 @@ static string get_va_nm_tp(Function *F, Value *param, map<Value *, string> &valu
         }
     }
 
-
-
     return tmp_name;
 }
 
-static std::map<Value*, string> collect_local_variable_metadata(Function& F){
+
+static std::map<Value*, string> collect_local_variable_metadata(Function& F)
+{
+    DebugInfoFinder Finder;
+    Finder.processModule(*F.getParent());
+
+    map<DIType*, string> typedefInfo = getTypedefInfo(*F.getParent());
+
     std::map<Value*, string> valueNameMap;
 
-    for (auto &BB: F){
-        for (auto &I: BB){
+    for (auto &BB: F)
+    {
+        for (auto &I: BB)
+        {
 
-            if(DbgValueInst *dbgValue = dyn_cast<DbgValueInst>(&I)){
+            if(DbgValueInst *dbgValue = dyn_cast<DbgValueInst>(&I))
+            {
+
+                #if 0
                 if(MetadataAsValue* val = dyn_cast_or_null<MetadataAsValue>(dbgValue->getOperand(0))){
                     if(ValueAsMetadata* valueAsMetadata = dyn_cast<ValueAsMetadata>(val->getMetadata())){
 
@@ -2201,7 +2525,33 @@ static std::map<Value*, string> collect_local_variable_metadata(Function& F){
                         }
                     }
                 }
-            } else if (DbgDeclareInst* dbgDecl = dyn_cast<DbgDeclareInst>(&I)){
+                #endif
+
+                Value* val = dbgValue->getValue();
+                if(!val){
+                    continue;
+                }
+
+                MDNode* N = dyn_cast<MDNode>(dbgValue->getVariable());
+                if(!N)
+                {
+                    continue;
+                }
+                DILocalVariable* DV = dyn_cast<DILocalVariable>(N);
+                if(!DV)
+                {
+                    continue;
+                }
+                DIType* DIT = DV->getType().resolve();
+                string name = DV->getName().str();
+                string type = DITypeToString(DIT, typedefInfo);
+                //errs()<<"+++++++++++++++++++++++++++++++ "<<name + "#" + type<<"\n";
+                valueNameMap[val] = name + "#" + type;
+
+            } else if (DbgDeclareInst* dbgDecl = dyn_cast<DbgDeclareInst>(&I))
+            {
+
+                #if 0
                 if(MetadataAsValue* val = dyn_cast_or_null<MetadataAsValue>(dbgDecl->getOperand(0))){
                     if(ValueAsMetadata* valueAsMetadata = dyn_cast<ValueAsMetadata>(val->getMetadata())){
 
@@ -2232,6 +2582,22 @@ static std::map<Value*, string> collect_local_variable_metadata(Function& F){
 
                     }
                 }
+                #endif
+                Value* val = dbgDecl->getAddress();
+                if(!val)
+                {
+                    continue;
+                }
+                DILocalVariable* LV = dbgDecl->getVariable();
+                if(!LV)
+                {
+                    continue;
+                }
+                DIType* DIT = LV->getType().resolve();
+                string name = LV->getName().str();
+                string type = DITypeToString(DIT, typedefInfo);
+                //errs()<<"+++++++++++++++++++++++++++++++ "<<name + "#" + type<<"\n";
+                valueNameMap[val] = name + "#" + type;
             }
         }// end for(I)
     }// end for(BB)
@@ -2332,26 +2698,14 @@ static string getGlobalName(Module *M, string fname){
     }
 
     size_t dot = M->getName().find(".");
-
     string global_name = "LOWFAT_GLOBAL_HD" +
                          M->getName().substr(from, dot).str() + "_" +
-                         fname + "_" +
-                         std::to_string(idx);
+                         fname + "_" + std::to_string(idx);
     idx++;
 
     return global_name;
 }
 
-static ConstantInt* getConstantIntVal(Value* val){
-    if(ConstantInt* cons = dyn_cast<ConstantInt>(val)){
-        return cons;
-    } else if(SExtInst* sext = dyn_cast<SExtInst>(val)){
-        return getConstantIntVal(sext->getOperand(0));
-    } else {
-        return nullptr;
-    }
-
-}
 
 /**
  * Processing Symbolize
@@ -2366,6 +2720,11 @@ static void symbolize(Module *M){
             continue;
 
         string fname = F.getName().str();
+
+        // skip lowfat functions
+        if(fname.rfind("lowfat_", 0) == 0) {
+            continue;
+        }
 
         // map[varibale] = metadata
         std::map<Value*, string> valueNameMap = collect_local_variable_metadata(F);
@@ -2441,13 +2800,20 @@ static void symbolize(Module *M){
 
 }// end static void symbolize(Module *M)
 
-static void replace_oob_checker(Module *M){
+static void replace_oob_checker(Module *M, map<string, vector<pair<string, string>>> &structInfo){
     vector<Instruction *> dels;
+
     for(auto &F: *M) {
         if (F.isDeclaration())
             continue;
 
-        //errs()<<"================= "<<F.getName()<<"\n";
+        // skip lowfat functions
+        if(F.getName().str().rfind("lowfat_", 0) == 0) {
+            continue;
+        }
+
+
+        //errs()<<"=========================== "<<F.getName()<<"\n";
         //if(F.getName().str() != "cpStrips") { continue;  }
 
         for (auto &BB: F) {
@@ -2464,60 +2830,110 @@ static void replace_oob_checker(Module *M){
                 }
 
                 std::map<Value *, string> valueNameMap = collect_local_variable_metadata(F);
-                if (CallInst *call = dyn_cast<CallInst>(&I)) {
+                if (CallInst *call = dyn_cast<CallInst>(&I))
+                {
                     Function *called = call->getCalledFunction();
-                    if (called == nullptr || !called->hasName()) {
+                    if (called == nullptr || !called->hasName())
+                    {
                         continue;
                     }
 
                     const string &Name = called->getName().str();
-                    if (Name == "lowfat_oob_check") {
+                    if (Name == "lowfat_oob_check")
+                    {
                         
                         Value *pointer = call->getArgOperand(1);
 
                         Value *base = call->getArgOperand(3);
 
-                        if (BitCastInst *castInst = dyn_cast<BitCastInst>(pointer)) {
+                        if (BitCastInst *castInst = dyn_cast<BitCastInst>(pointer))
+                        {
                             pointer = castInst->getOperand(0);
                         }
 
-                        if (GetElementPtrInst *gptr = dyn_cast<GetElementPtrInst>(pointer)) {
+                        if (GetElementPtrInst *gptr = dyn_cast<GetElementPtrInst>(pointer))
+                        {
+
+                            string base_name_type = get_va_nm_tp(&F, base, valueNameMap, structInfo);
+                            pair<string, string> basePair = parseBaseAndType(base_name_type);
+
+                            string base_name = basePair.first;
+                            string base_type = basePair.second;
+
                             Value *offset = nullptr;
-                            if(gptr->getNumOperands() == 2){
+                            if(gptr->getNumOperands() == 2)
+                            {
                                 offset = gptr->getOperand(1);
-                            }else if(gptr->getNumOperands() == 3){
+                            }else if(gptr->getNumOperands() == 3)
+                            {
                                 offset = gptr->getOperand(2);
                             }
 
-
-
-                            string ptr_name;
+                            string ptr_name_type;
                             if(ConstantInt* CI = getConstantIntVal(offset)){
-                                string type = typeToStr(CI->getType());
-                                ptr_name = std::to_string(*(CI->getValue().getRawData())) + "#" + type;
-                            } else {
-                                ptr_name = get_va_nm_tp(&F, offset, valueNameMap);
+
+                                uint64_t rawData = *(CI->getValue().getRawData());
+
+                                auto *PTy = dyn_cast<PointerType>(gptr->getPointerOperandType());
+                                if(PTy)
+                                {
+
+                                    if(PTy->getPointerElementType()->isStructTy())
+                                    {
+                                        // for struct member
+                                        string connection;
+
+                                        if(endsWith(base_type, "*"))
+                                        {
+                                            connection = "->";
+                                            //TODO: only support One-Dimension pointer
+                                        } else
+                                        {
+                                            connection = ".";
+                                        }
+                                        string removePtr = getPureType(base_type);
+
+                                        if(structInfo.find(removePtr) != structInfo.end() && rawData < structInfo[removePtr].size())
+                                        {
+                                            string memberName = structInfo[removePtr][rawData].first;
+                                            string memberType = structInfo[removePtr][rawData].second;
+
+                                            ptr_name_type = base_name + connection + memberName + "#" + memberType;
+                                        } else
+                                        {
+                                            errs()<<">>>>>>>>> unknown struct information: "<<base_type<<" IDX: "<<rawData<<"\n";
+                                            continue;
+                                        }
+
+                                    } else
+                                    {
+                                        // for array constant index
+                                        string type = typeToStr(CI->getType());
+                                        ptr_name_type = std::to_string(*(CI->getValue().getRawData())) + "#" + type;
+                                    }
+
+                                } else
+                                {
+                                    continue;
+                                }
+
+                            } else
+                            {
+                                ptr_name_type = get_va_nm_tp(&F, offset, valueNameMap, structInfo);
                             }
 
-                            size_t pos = ptr_name.find("#");
-                            if(pos != string::npos){
-                                ptr_name = ptr_name.substr(0, pos);
-                            }
+                            pair<string, string> offsetPair = parseBaseAndType(ptr_name_type);
+                            string ptr_name = offsetPair.first;
 
-                            string base_name = get_va_nm_tp(&F, base, valueNameMap);
+//                            errs()<<"PROCESSING OFFSET:\n";
+//                            offset->dump();
+//                            errs()<<"OFFSET NAME: "<<ptr_name<<"\n";
+//                            errs()<<"PROCESSING BASE\n";
+//                            base->dump();
+//                            errs()<<"BASE NAME: "<<base_name<<"\n";
 
-                            errs()<<"PROCESSING OFFSET:\n";
-                            offset->dump();
-                            errs()<<"OFFSET NAME: "<<ptr_name<<"\n";
-
-                            errs()<<"PROCESSING BASE\n";
-                            base->dump();
-                            errs()<<"BASE NAME: "<<base_name<<"\n";
-
-
-                            pos = base_name.find("#");
-
-                            if(pos == string::npos){
+                            if(base_type == "")
+                            {
                                 errs()<<"ILLEGAL BASE NAME: "<<base_name<<"\n";
                                 errs()<<"CURRENT CALL INST:\n";
                                 call->dump();
@@ -2526,13 +2942,11 @@ static void replace_oob_checker(Module *M){
                                 continue;
                             }
 
-                            string ptr_type = base_name.substr(pos + 1);
-
                             const DebugLoc &location = call->getDebugLoc();
                             int line = location.getLine();
                             string loc = M->getName().str() + ":" + F.getName().str() + ":" + to_string(line);
 
-                            string msg = ptr_name + "#" + ptr_type + "#" + loc;
+                            string msg = ptr_name + "#" + base_type + "#" + loc;
 
                             //errs() << "=============================== OOB CHECKING " << msg << "\n";
 
@@ -2573,6 +2987,7 @@ static void replace_oob_checker(Module *M){
 
                             call->replaceAllUsesWith(newCall);
                             dels.push_back(call);
+
                         }
                     }
                 }
@@ -2580,7 +2995,8 @@ static void replace_oob_checker(Module *M){
         }
     }//end for(auto &F: *M)
 
-    for(auto &I: dels){
+    for(auto &I: dels)
+    {
         I->eraseFromParent();
     }
 }//replace_oob_checker(Module *M)
@@ -2658,10 +3074,14 @@ static Constant* insertGlobalStrAndGenGEP(Module *M, string str){
     return GEP;
 }
 
-static void insert_iof_handler(Module *M) {
-    for(auto &F: *M){
+static void insert_iof_handler(Module *M, map<string, vector<pair<string, string>>> structInfo)
+{
+    for(auto &F: *M)
+    {
         if (F.isDeclaration())
             continue;
+
+        //if(F.getName().str() != "JPEGSetupEncode") continue;
 
         std::map<Value *, string> valueNameMap = collect_local_variable_metadata(F);
 
@@ -2669,35 +3089,46 @@ static void insert_iof_handler(Module *M) {
         Constant *FNameGEP = nullptr;
 
 
-        for (auto &BB: F){
-            for (auto &I: BB){
-                if(CallInst *call = dyn_cast<CallInst>(&I)) {
+        for (auto &BB: F)
+        {
+            for (auto &I: BB)
+            {
+
+                if(CallInst *call = dyn_cast<CallInst>(&I))
+                {
                     Function *called = call->getCalledFunction();
-                    if (called == nullptr || !called->hasName()) {
+                    if (called == nullptr || !called->hasName())
+                    {
                         continue;
                     }
                     const string &Name = called->getName().str();
                     bool needInsert = false;
                     char op = 0;
-                    if (Name == "__ubsan_handle_add_overflow") {
+                    if (Name == "__ubsan_handle_add_overflow")
+                    {
                         needInsert = true;
                         op = '+';
-                    } else if (Name == "__ubsan_handle_sub_overflow") {
+                    } else if (Name == "__ubsan_handle_sub_overflow")
+                    {
                         needInsert = true;
                         op = '-';
-                    } else if (Name == "__ubsan_handle_mul_overflow") {
+                    } else if (Name == "__ubsan_handle_mul_overflow")
+                    {
                         needInsert = true;
                         op = '*';
-                    } else if (Name == "__ubsan_handle_divrem_overflow") {
+                    } else if (Name == "__ubsan_handle_divrem_overflow")
+                    {
                         needInsert = true;
                         op = '/';
                     }
 
-                    if(needInsert){
+                    if(needInsert)
+                    {
                         IRBuilder<> builder(&I);
 
                         Function* handler = M->getFunction("lowfat_arith_error");
-                        if (!handler) {
+                        if (!handler)
+                        {
                             std::vector<Type*> typeVec;
                             // void * Data
                             typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
@@ -2717,20 +3148,23 @@ static void insert_iof_handler(Module *M) {
 
                         Value* data = call->getArgOperand(0);
 
-                        string leftName = get_va_nm_tp(&F, call->getArgOperand(1), valueNameMap);
+                        string leftName = get_va_nm_tp(&F, call->getArgOperand(1), valueNameMap, structInfo);
 
                         size_t pos = leftName.find("#");
-                        if(pos != string::npos){
+                        if(pos != string::npos)
+                        {
                             leftName = leftName.substr(0, pos);
                         }
 
-                        string rightName = get_va_nm_tp(&F, call->getArgOperand(2), valueNameMap);
+                        string rightName = get_va_nm_tp(&F, call->getArgOperand(2), valueNameMap, structInfo);
                         pos = rightName.find("#");
-                        if(pos != string::npos){
+                        if(pos != string::npos)
+                        {
                             rightName = rightName.substr(0, pos);
                         }
 
-                        if(!FNameGEP){
+                        if(!FNameGEP)
+                        {
                             FNameGEP = insertGlobalStrAndGenGEP(M, fnameStr);
                         }
 
@@ -2747,6 +3181,7 @@ static void insert_iof_handler(Module *M) {
     } // end for F: M
 
 }
+
 
 
 /*
@@ -2883,13 +3318,23 @@ struct LowFat : public ModulePass
 
         // added by wb
         if(option_symbolize){
-            symbolize(&M);
-            replace_oob_checker(&M);
+            map<string, vector<pair<string, string>>> structInfo = analysisTypeInfo(M);
 
-            memory_overlap_check(&M);
+//            for(auto ii: structInfo){
+//                errs()<<">>>>>>> "<<ii.first<<"\n";
+//                for(auto i: ii.second){
+//                    errs()<<"\t\t"<<i.first<<" "<<i.second<<"\n";
+//                }
+//            }
+
+
+            symbolize(&M);
+            replace_oob_checker(&M, structInfo);
+
+            //memory_overlap_check(&M);
 
             // integer overflow handler
-            insert_iof_handler(&M);
+            insert_iof_handler(&M, structInfo);
         }
 
         if (option_debug)

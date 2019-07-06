@@ -557,19 +557,80 @@ extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fna
 
     char* type = getTypeName(typeDesc);
 
-    //fprintf(stderr, "LOWFAT IOF CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s:%s:%s\n", ptr_name, name, loc.Filename, fname, loc.Line);
+    if(opcode == '/') {
 
-    if(opcode == '/'){
+        FILE* output = fopen("/tmp/cfc.out", "w");
+        fprintf(output, "%s:%s:%u#(%s != 0)\n", loc.Filename, fname, loc.Line, right);
+        fclose(output);
+        fprintf(stderr, "Constraint has been written to /tmp/cfc.out\n");
+
         lowfat_error(
                 "divide-by-zero error detected!\n"
                 "\tfile = %s\n"
                 "\tfunc = %s\n"
                 "\tline = %d\n"
                 "\tcol  = %d\n"
-                "\tzero = %s  \n"
+                "\tzero = %s\n"
                 "\ttype = %s\n",
                 loc.Filename, fname, loc.Line, loc.Column, right, type);
     } else {
+
+        FILE* output = fopen("/tmp/cfc.out", "w");
+
+        char constraint[128];
+
+        if(isSignedIntegerTy(typeDesc)){
+            char* max;
+            char* min;
+            if(strcmp(type, "int") == 0){
+                max = "INT_MAX";
+                min = "INT_MIN";
+            } else if(strcmp(type, "char") == 0) {
+                max = "CHAR_MAX";
+                min = "CHAR_MAX";
+            } else if (strcmp(type, "long") == 0) {
+                max = "LONG_MAX";
+                min = "LONG_MIN";
+            } else {
+                max = "SHRT_MAX";
+                min = "SHRT_MIN";
+            }
+
+            if(opcode == '+') {
+                sprintf(constraint, "(%s > 0 && %s > 0 && %s < %s - %s) || "
+                                    "(%s < 0 && %s < 0 && %s < %s + %s)", left, right, max, left, min, right);
+            } else if(opcode == '-') {
+                sprintf(constraint, "(%s > 0 && %s < 0 && %s < %s + %s) || "
+                                    "(%s < 0 && %s > 0 && %s < %s + %s)", left, right, max, left, min, right);
+            } else if(opcode == '*') {
+                sprintf(constraint, "%s != 0 && %s < %s / %s", right, left, max, right);
+            }
+        } else {
+            char* max;
+            char* min = "0";
+            if(strcmp(type, "unsigned int") == 0){
+                max = "UINT_MAX";
+            } else if(strcmp(type, "unsigned char") == 0) {
+                max = "UCHAR_MAX";
+            } else if (strcmp(type, "unsigned long") == 0) {
+                max = "ULONG_MAX";
+            } else {
+                max = "USHRT_MAX";
+            }
+
+            if(opcode == '+') {
+                sprintf(constraint, "%s < %s - %s", left, max, right);
+            } else if(opcode == '-') {
+                sprintf(constraint, "%s >= %s", left, right);
+            } else if(opcode == '*') {
+                sprintf(constraint, "%s != 0 && %s < %s / %s", right, left, max, right);
+            }
+        }
+
+        fprintf(output, "%s:%s:%u#(%s)\n", loc.Filename, fname, loc.Line, constraint);
+        fclose(output);
+        fprintf(stderr, "Constraint has been written to /tmp/cfc.out\n");
+
         lowfat_error(
                 "integer-over-flow error detected!\n"
                 "\tfile = %s\n"

@@ -1954,6 +1954,7 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
         // insert global
         GlobalVariable *gvar_struct_head = new GlobalVariable(*M, head_type, false, GlobalValue::PrivateLinkage, 0, global_name);
         gvar_struct_head->setAlignment(8);
+
         initializeGlobalHead(M, gvar_struct_head, val_name, head_type, nullptr);
 
         Function* insert_map_func = M->getFunction("lowfat_insert_map");
@@ -2458,6 +2459,17 @@ static string get_va_nm_tp(Function *F,
     if(PHINode* phi = dyn_cast<PHINode>(param))
     {
         //TODO
+        //errs()<<"PHI !!!!!!!!!!!!!!\n";
+
+        string firstNm = get_va_nm_tp(F,phi->getIncomingValue(0), valueNameMap, structInfo);
+        if(!startsWith(firstNm, "tmp_")){
+            return firstNm;
+        }
+        string secondNm = get_va_nm_tp(F,phi->getIncomingValue(1), valueNameMap, structInfo);
+        if(!startsWith(secondNm, "tmp_")){
+            return secondNm;
+        }
+
         return tmp_name;
     }
     if(BinaryOperator* bo = dyn_cast<BinaryOperator>(param))
@@ -2820,9 +2832,8 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
             continue;
         }
 
-
+        //if(F.getName().str() != "PSDataColorContig") { continue;  }
         //errs()<<"=========================== "<<F.getName()<<"\n";
-        //if(F.getName().str() != "cpStrips") { continue;  }
 
         for (auto &BB: F) {
 
@@ -2947,6 +2958,8 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                                 call->dump();
                                 errs()<<"CURRENT BASE PTR:\n";
                                 base->dump();
+                                errs()<<"CURRENT OFFSET PTR:\n";
+                                offset->dump();
                                 continue;
                             }
 

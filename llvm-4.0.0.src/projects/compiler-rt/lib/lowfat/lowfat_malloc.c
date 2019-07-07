@@ -140,7 +140,6 @@ extern void *lowfat_malloc(size_t size)
 
 
 any_t GLB_PTR_MAP = NULL;
-any_t BASE2PTR_MAP = NULL;
 
 extern void lowfat_insert_map(size_t requiredSize, void* ptr, MALLOC_LIST_HEAD* global_head){
 
@@ -159,10 +158,6 @@ extern void lowfat_insert_map(size_t requiredSize, void* ptr, MALLOC_LIST_HEAD* 
     void* base = lowfat_base(ptr);
     map_put(GLB_PTR_MAP, (size_t) base, (size_t) global_head);
 
-    if(BASE2PTR_MAP == NULL){
-        BASE2PTR_MAP = map_create();
-    }
-    map_put(BASE2PTR_MAP, (size_t) base, (size_t) ptr);
 }
 
 /**

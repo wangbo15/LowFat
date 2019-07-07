@@ -637,7 +637,7 @@ extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fna
                 "\tfunc = %s\n"
                 "\tline = %d\n"
                 "\tcol  = %d\n"
-                "\toper = %s %c % s \n"
+                "\toper = %s %c % s\n"
                 "\ttype = %s\n",
                 loc.Filename, fname, loc.Line, loc.Column, left, opcode, right, type);
     }

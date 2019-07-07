@@ -2461,13 +2461,18 @@ static string get_va_nm_tp(Function *F,
         //TODO
         //errs()<<"PHI !!!!!!!!!!!!!!\n";
 
-        string firstNm = get_va_nm_tp(F,phi->getIncomingValue(0), valueNameMap, structInfo);
-        if(!startsWith(firstNm, "tmp_")){
-            return firstNm;
+        if(phi != phi->getIncomingValue(0)){
+            string firstNm = get_va_nm_tp(F, phi->getIncomingValue(0), valueNameMap, structInfo);
+            if(!startsWith(firstNm, "tmp_")){
+                return firstNm;
+            }
         }
-        string secondNm = get_va_nm_tp(F,phi->getIncomingValue(1), valueNameMap, structInfo);
-        if(!startsWith(secondNm, "tmp_")){
-            return secondNm;
+
+        if(phi != phi->getIncomingValue(1)) {
+            string secondNm = get_va_nm_tp(F, phi->getIncomingValue(1), valueNameMap, structInfo);
+            if (!startsWith(secondNm, "tmp_")) {
+                return secondNm;
+            }
         }
 
         return tmp_name;

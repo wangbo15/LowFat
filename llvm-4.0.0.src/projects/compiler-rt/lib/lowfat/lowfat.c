@@ -391,13 +391,13 @@ static LOWFAT_CONST void *lowfat_region(size_t idx)
 extern void lowfat_memcpy_overlap(void* desc, void* src, size_t len, char* location){
     size_t diff;
 
-    char* msg;
-    if(src == desc){
+    const char* msg;
+    if(src == desc) {
         return;
-    } else if(src > desc){
+    } else if(src > desc) {
         diff = (size_t)((const uint8_t *)src - (const uint8_t *)desc);
         msg = "desc + len > src";
-    }else{
+    } else {
         diff = (size_t)((const uint8_t *)desc - (const uint8_t *)src);
         msg = "src + len > desc";
     }
@@ -517,32 +517,39 @@ static int isSignedIntegerTy(LOWFAT_TYPE_DESC* typeDesc) {
     return typeDesc->TypeKind == TK_Integer && (typeDesc->TypeInfo & 1);
 }
 
-static char* getTypeName(LOWFAT_TYPE_DESC* typeDesc){
-    if(typeDesc->TypeKind == TK_Integer){
+static void getTypeName(LOWFAT_TYPE_DESC* typeDesc, char *res){
+    if(typeDesc->TypeKind == TK_Integer)
+    {
         unsigned width = getIntegerBitWidth(typeDesc);
 
-        char res[20];
-        if(!isSignedIntegerTy(typeDesc)){
+        if(!isSignedIntegerTy(typeDesc))
+        {
             strcpy(res, "unsigned ");
         }
-        char *type;
-        if(width == sizeof(char) * 8){
+        const char *type;
+        if(width == sizeof(char) * 8)
+        {
             type = "char";
-        } else if(width == sizeof(short) * 8){
+        } else if(width == sizeof(short) * 8)
+        {
             type = "short";
-        } else if(width == sizeof(int) * 8){
+        } else if(width == sizeof(int) * 8)
+        {
             type = "int";
-        } else if (width == sizeof(long) * 8) {
+        } else if (width == sizeof(long) * 8)
+        {
             type = "long";
-        } else {
+        } else
+        {
             lowfat_error("ERROR INT TYPE\n");
         }
         strcat(res, type);
-        return res;
-    } else if (typeDesc->TypeKind == TK_Float){
+    } else if (typeDesc->TypeKind == TK_Float)
+    {
         // skip float types
-        return "";
-    } else {
+
+    } else
+    {
         lowfat_error("ERROR TYPE\n");
     }
 }
@@ -555,7 +562,8 @@ extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fna
 
     LOWFAT_TYPE_DESC* typeDesc = overflowData->Type;
 
-    char* type = getTypeName(typeDesc);
+    char type[64];
+    getTypeName(typeDesc, type);
 
     if(opcode == '/') {
 
@@ -580,8 +588,8 @@ extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fna
         char constraint[128];
 
         if(isSignedIntegerTy(typeDesc)){
-            char* max;
-            char* min;
+            const char* max;
+            const char* min;
             if(strcmp(type, "int") == 0){
                 max = "INT_MAX";
                 min = "INT_MIN";
@@ -598,16 +606,20 @@ extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fna
 
             if(opcode == '+') {
                 sprintf(constraint, "(%s > 0 && %s > 0 && %s < %s - %s) || "
-                                    "(%s < 0 && %s < 0 && %s < %s + %s)", left, right, max, left, min, right);
+                                    "(%s < 0 && %s < 0 && %s > %s - %s)",
+                                    left, right, left, max, right,
+                                    left, right, left, min, right);
             } else if(opcode == '-') {
-                sprintf(constraint, "(%s > 0 && %s < 0 && %s < %s + %s) || "
-                                    "(%s < 0 && %s > 0 && %s < %s + %s)", left, right, max, left, min, right);
+                sprintf(constraint, "(%s > 0 && %s < 0 && %s < %s - %s) || "
+                                    "(%s < 0 && %s > 0 && %s > %s - %s)",
+                                    left, right, left, max, right,
+                                    left, right, left, min, right);
             } else if(opcode == '*') {
                 sprintf(constraint, "%s != 0 && %s < %s / %s", right, left, max, right);
             }
         } else {
-            char* max;
-            char* min = "0";
+            const char* max;
+            //const char* min = "0";
             if(strcmp(type, "unsigned int") == 0){
                 max = "UINT_MAX";
             } else if(strcmp(type, "unsigned char") == 0) {
@@ -684,7 +696,7 @@ extern void lowfat_oob_warning(unsigned info,
 }
 
 
-static int split (char *str, char c, char ***arr)
+static int split (const char *str, char c, char ***arr)
 {
     int count = 1;
     int token_len = 1;
@@ -692,7 +704,7 @@ static int split (char *str, char c, char ***arr)
     char *p;
     char *t;
 
-    p = str;
+    p = (char *) str;
     while (*p != '\0')
     {
         if (*p == c)
@@ -704,7 +716,7 @@ static int split (char *str, char c, char ***arr)
     if (*arr == NULL)
         exit(1);
 
-    p = str;
+    p = (char *) str;
     while (*p != '\0')
     {
         if (*p == c)
@@ -724,7 +736,7 @@ static int split (char *str, char c, char ***arr)
         exit(1);
 
     i = 0;
-    p = str;
+    p = (char *) str;
     t = ((*arr)[i]);
     while (*p != '\0')
     {
@@ -744,7 +756,7 @@ static int split (char *str, char c, char ***arr)
     return count;
 }
 
-static const char* get_lowfat_locmsg(void* baseptr){
+static const char* get_lowfat_locmsg(const void* baseptr){
     const char* loc_msg = lowfat_is_heap_ptr(baseptr) ?
                           "HEAP" :
                           (lowfat_is_stack_ptr(baseptr) ? "STACK" :
@@ -771,31 +783,33 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
     }
 
     char* ptr_name = arr[0];
-    char* ptr_type = arr[1];
+    //char* ptr_type = arr[1];
     char* location = arr[2];
 
-    size_t size = lowfat_size(baseptr);
     size_t diff;
 
     if(lowfat_is_heap_ptr(baseptr) || lowfat_is_stack_ptr(baseptr)){
         diff = (size_t)((const uint8_t *)ptr - (const uint8_t *) lowfat_base(baseptr));
     } else {
-        diff = (size_t)((const uint8_t *)ptr - (const uint8_t *)baseptr);
+        diff = (size_t)((const uint8_t *)ptr - (const uint8_t *) baseptr);
     }
 
+    size_t size = lowfat_size(baseptr);
     if (diff >= size){
-        const char* loc_msg = get_lowfat_locmsg(baseptr);
-        //fprintf(stderr, "lowfat_oob_check_verbose %s ERROR PTR %p -> BASE %p, DIFF: %zu\n", loc_msg, ptr, baseptr, diff);
 
         const char *kind = lowfat_error_kind(info);
         ssize_t overflow = (ssize_t)ptr - (ssize_t) baseptr;
 
-        if(GLB_PTR_MAP != NULL){
+        if(GLB_PTR_MAP != NULL)
+        {
             size_t lf_base = (size_t) lowfat_base(baseptr);
             size_t value = map_get(GLB_PTR_MAP, lf_base);
-            if(value == 0x0){
-                fprintf(stderr, "lowfat_oob_check_verbose MAP_MISSING, LOWFAT BASE: %p, MAP SIZE: %d\n", lf_base, map_size(GLB_PTR_MAP));
-            } else{
+            if(value == 0x0)
+            {
+                fprintf(stderr, "lowfat_oob_check_verbose MAP_MISSING, LOWFAT BASE: %zu, MAP SIZE: %d\n",
+                        lf_base, map_size(GLB_PTR_MAP));
+            } else
+            {
                 MALLOC_LIST_HEAD* global_head = (MALLOC_LIST_HEAD*) value;
 
                 int len = strlen(global_head->name);
@@ -805,14 +819,19 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
                 strncpy(name, global_head->name, i);
                 name[i] = '\0';
 
-                fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s\n", ptr_name, name, location);
-
                 FILE* output = fopen("/tmp/cfc.out", "w");
-                fprintf(output, "%s#(%s < %s)\n", location, ptr_name, name);
-                fclose(output);
+                if(overflow < 0)
+                {
+                    fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s >= 0), LOCATION: %s\n", ptr_name, location);
+                    fprintf(output, "%s#(%s >= 0)\n", location, ptr_name);
+                } else
+                {
+                    fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s\n", ptr_name, name, location);
+                    fprintf(output, "%s#(%s < %s)\n", location, ptr_name, name);
+                }
                 fprintf(stderr, "Constraint has been written to /tmp/cfc.out\n");
+                fclose(output);
             }
-
         }
 
         lowfat_error(

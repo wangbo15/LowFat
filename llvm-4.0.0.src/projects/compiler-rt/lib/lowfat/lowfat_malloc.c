@@ -141,21 +141,22 @@ extern void *lowfat_malloc(size_t size)
 
 any_t GLB_PTR_MAP = NULL;
 
-extern void lowfat_insert_map(size_t requiredSize, void* ptr, MALLOC_LIST_HEAD* global_head){
+extern void lowfat_insert_map(size_t requiredSize, void* realBase, MALLOC_LIST_HEAD* global_head){
 
-    //fprintf(stderr, "lowfat_insert_map %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s\n", requiredSize, lowfat_base(ptr), global_head, global_head->name);
-
-    (global_head->time)++;
+    //fprintf(stderr, "lowfat_insert_map %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s\n", requiredSize, lowfat_base(realBase), global_head, global_head->name);
 
     //TODO: add lock
     //lowfat_mutex_t mutex;
+
+    (global_head->time)++;
+    global_head->real_base = realBase;
 
     if(GLB_PTR_MAP == NULL){
         GLB_PTR_MAP = map_create();
     }
 
     // add item: result_address_lowfat_base -> global_head_address
-    void* base = lowfat_base(ptr);
+    void* base = lowfat_base(realBase);
     map_put(GLB_PTR_MAP, (size_t) base, (size_t) global_head);
 
 }
@@ -170,6 +171,8 @@ extern void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head)
 {
     void* result = lowfat_malloc(size);
     lowfat_insert_map(size, result, global_head);
+
+    //fprintf(stderr, "lowfat_malloc_symbolize %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s\n", size, result, global_head, global_head->name);
 
     return result;
 }

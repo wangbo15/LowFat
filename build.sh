@@ -205,13 +205,13 @@ else
 fi
 
 echo -e "${GREEN}$0${OFF}: building the LowFat config builder..."
-(cd config; CC=$CLANG CFLAGS="-std=gnu99" CXX=$CLANGXX make >/dev/null)
+(cd config; CC=$CLANG CFLAGS="-std=gnu99" CXX=$CLANGXX make)
 
 echo -e "${GREEN}$0${OFF}: building the LowFat config..."
 (cd config; ./lowfat-config $CONFIG --no-protect > lowfat-config.log)
 
 echo -e "${GREEN}$0${OFF}: building the LowFat config check..."
-(cd config; CC=$CLANG CLFAGS="-std=gnu99" CXX=$CLANGXX make lowfat-check-config >/dev/null)
+(cd config; CC=$CLANG CLFAGS="-std=gnu99" CXX=$CLANGXX make lowfat-check-config)
 
 echo -e "${GREEN}$0${OFF}: checking the LowFat config..."
 if config/lowfat-check-config >/dev/null 2>&1

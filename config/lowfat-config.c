@@ -553,11 +553,17 @@ static void compile(FILE *stream, FILE *hdr_stream, FILE *ld_stream,
         if (legacy)
             fprintf(hdr_stream, "#define _LOWFAT_LEGACY 1\n");
         
-        const char* s = getenv("LOWFAT_REVERSE_MEM_LAYOUT");
-        //if(s != NULL){
+        #ifndef LOWFAT_REVERSE_MEM_LAYOUT
+        #define LOWFAT_REVERSE_MEM_LAYOUT 1
+        #endif
+        
+        #if LOWFAT_REVERSE_MEM_LAYOUT
+        	#pragma message "USING LOWFAT_REVERSE_MEM_LAYOUT"
             fprintf(hdr_stream, "\n");
             fprintf(hdr_stream, "#define LOWFAT_REVERSE_MEM_LAYOUT 1\n");
-        //}
+        #else
+            #pragma message "NOT USING LOWFAT_REVERSE_MEM_LAYOUT"
+        #endif
         
         fprintf(hdr_stream, "\n");
         fprintf(hdr_stream, "#endif\t/* __LOWFAT_CONFIG_H */\n");

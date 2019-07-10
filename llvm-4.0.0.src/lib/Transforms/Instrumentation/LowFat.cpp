@@ -1710,8 +1710,13 @@ static void makeGlobalVariableReverse(Module *M, GlobalVariable *GV, std::vector
 }
 
 static StructType* declear_global_types(Module* M);
-static string get_va_nm_tp(Function *F, Value *param, map<Value *, string> &valueNameMap, map<string, vector<pair<string, string>>> structInfo);
+
+static string get_va_nm_tp(Function *F, Value *param,
+                        map<Value *, string> &valueNameMap,
+                        map<string, vector<pair<string, string>>> &structInfo);
+
 static map<Value*, string> collect_local_variable_metadata(Function& F);
+
 static void initializeGlobalHead(Module* M,
         GlobalVariable *gvar_struct_head,
         string val_name,
@@ -2100,6 +2105,7 @@ static void initializeGlobalHead(Module* M,
     }else{
         contents.push_back(ConstantPointerNull::get(PointerType::get(IntegerType::get(M->getContext(), 64), 0)));
     }
+    contents.push_back(ConstantPointerNull::get(PointerType::get(IntegerType::get(M->getContext(), 8), 0)));
 
     Constant* const_head = ConstantStruct::get(head_type, contents);
     gvar_struct_head->setInitializer(const_head);
@@ -2290,10 +2296,11 @@ static map<string, vector<pair<string, string>>> analysisTypeInfo(Module &M){
 }
 
 
-static string get_va_nm_tp(Function *F,
+static string get_va_nm_tp_inner(Function *F,
         Value *param,
         map<Value *, string> &valueNameMap,
-        map<string, vector<pair<string, string>>> structInfo)
+        map<string, vector<pair<string, string>>> &structInfo,
+        set<Value*> &scanned)
 {
 
 
@@ -2301,8 +2308,12 @@ static string get_va_nm_tp(Function *F,
         string type = typeToStr(param->getType());
         return std::to_string(*CI->getValue().getRawData()) + "#" + type;
     }
+    if(ConstantPointerNull* CPN = dyn_cast<ConstantPointerNull>(param)){
+        string type = typeToStr(param->getType());
+        return "NULL#" + type;
+    }
 
-    //errs()<<"----------------------  get_va_nm_tp\n";
+    //errs()<<"----------------------  get_va_nm_tp_inner\n";
     //param->dump();
 
     static int counter = 0;
@@ -2317,12 +2328,12 @@ static string get_va_nm_tp(Function *F,
     if(BitCastInst* bc = dyn_cast<BitCastInst>(param))
     {
         param = dyn_cast<Value>(bc->getOperand(0));
-        return get_va_nm_tp(F, param, valueNameMap, structInfo);
+        return get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
     }
     if(AllocaInst* al = dyn_cast<AllocaInst>(param))
     {
         param = al->getArraySize();
-        return get_va_nm_tp(F, param, valueNameMap, structInfo);
+        return get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
     }
     if(CastInst* castInst = dyn_cast<CastInst>(param))
     {
@@ -2336,7 +2347,7 @@ static string get_va_nm_tp(Function *F,
         } else
         {
             param = castInst->getOperand(0);
-            return get_va_nm_tp(F, param, valueNameMap, structInfo);
+            return get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
         }
     }
     if(CallInst* call = dyn_cast<CallInst>(param))
@@ -2348,7 +2359,7 @@ static string get_va_nm_tp(Function *F,
         if(call->getCalledFunction()->getName().str() == "lowfat_base")
         {
             param = call->getArgOperand(0);
-            return get_va_nm_tp(F, param, valueNameMap, structInfo);
+            return get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
         }
         if(call->getNumUses() == 2)
         { // TODO
@@ -2359,7 +2370,9 @@ static string get_va_nm_tp(Function *F,
                 if (auto I = dyn_cast<BitCastInst>(U))
                 {
                     param = I;
-                    return get_va_nm_tp(F, param, valueNameMap, structInfo);
+                    if(valueNameMap.count(param))
+                        return valueNameMap[param];
+
                 }
             }
         }
@@ -2368,13 +2381,13 @@ static string get_va_nm_tp(Function *F,
     if(LoadInst* load = dyn_cast<LoadInst>(param))
     {
         param = load->getPointerOperand();
-        return get_va_nm_tp(F, param, valueNameMap, structInfo);
+        return get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
     }
     if(GetElementPtrInst* GEP = dyn_cast<GetElementPtrInst>(param))
     {
         //TODO
         Value* base = GEP->getPointerOperand();
-        string base_name_type = get_va_nm_tp(F, base, valueNameMap, structInfo);
+        string base_name_type = get_va_nm_tp_inner(F, base, valueNameMap, structInfo, scanned);
         pair<string, string> basePair = parseBaseAndType(base_name_type);
 
 
@@ -2452,7 +2465,7 @@ static string get_va_nm_tp(Function *F,
         else
         {
             // TODO
-            return get_va_nm_tp(F, offset, valueNameMap, structInfo);
+            return get_va_nm_tp_inner(F, offset, valueNameMap, structInfo, scanned);
         }
     }
 
@@ -2461,18 +2474,20 @@ static string get_va_nm_tp(Function *F,
         //TODO
         //errs()<<"PHI !!!!!!!!!!!!!!\n";
 
-        if(phi != phi->getIncomingValue(0)){
-            string firstNm = get_va_nm_tp(F, phi->getIncomingValue(0), valueNameMap, structInfo);
+        if(phi != phi->getIncomingValue(0) && scanned.find(phi->getIncomingValue(0)) == scanned.end()){
+            string firstNm = get_va_nm_tp_inner(F, phi->getIncomingValue(0), valueNameMap, structInfo, scanned);
             if(!startsWith(firstNm, "tmp_")){
                 return firstNm;
             }
+            scanned.insert(phi->getIncomingValue(0));
         }
 
-        if(phi != phi->getIncomingValue(1)) {
-            string secondNm = get_va_nm_tp(F, phi->getIncomingValue(1), valueNameMap, structInfo);
+        if(phi != phi->getIncomingValue(1) && scanned.find(phi->getIncomingValue(1)) == scanned.end()) {
+            string secondNm = get_va_nm_tp_inner(F, phi->getIncomingValue(1), valueNameMap, structInfo, scanned);
             if (!startsWith(secondNm, "tmp_")) {
                 return secondNm;
             }
+            scanned.insert(phi->getIncomingValue(1));
         }
 
         return tmp_name;
@@ -2482,13 +2497,13 @@ static string get_va_nm_tp(Function *F,
         Value* left = bo->getOperand(0);
         Value* right = bo->getOperand(1);
 
-        string leftName = get_va_nm_tp(F, left, valueNameMap, structInfo);
+        string leftName = get_va_nm_tp_inner(F, left, valueNameMap, structInfo, scanned);
         std::size_t idx = leftName.find("#");
         if(idx != std::string::npos) {
             leftName = leftName.substr(0, idx);
         }
 
-        string rightName = get_va_nm_tp(F, right, valueNameMap, structInfo);
+        string rightName = get_va_nm_tp_inner(F, right, valueNameMap, structInfo, scanned);
         idx = rightName.find("#");
         if(idx != std::string::npos)
         {
@@ -2519,6 +2534,25 @@ static string get_va_nm_tp(Function *F,
 
     return tmp_name;
 }
+
+static string get_va_nm_tp(Function *F,
+                           Value *param,
+                           map<Value *, string> &valueNameMap,
+                           map<string, vector<pair<string, string>>> &structInfo){
+
+//    if(Instruction* I = dyn_cast<Instruction>(param))
+//        if(I->getDebugLoc()) {
+//            errs()<<"=================================================\n";
+//            if(I->getDebugLoc().getLine() == 11301){
+//                F->dump();
+//            }
+//        }
+
+    set<Value*> scannedByPhi;
+    return get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scannedByPhi);
+}
+
+
 
 
 static std::map<Value*, string> collect_local_variable_metadata(Function& F)
@@ -2703,6 +2737,8 @@ static StructType* declear_global_types(Module* M){
         vec_list_head.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
         // size_t* glo_addr
         vec_list_head.push_back(PointerType::get(IntegerType::get(M->getContext(), 64), 0));
+        // void* real_base
+        vec_list_head.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
 
         if (head_type->isOpaque()) {
             head_type->setBody(vec_list_head, false);

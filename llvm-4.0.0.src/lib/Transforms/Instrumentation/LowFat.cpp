@@ -1715,7 +1715,7 @@ static string get_va_nm_tp(Function *F, Value *param,
                         map<Value *, string> &valueNameMap,
                         map<string, vector<pair<string, string>>> &structInfo);
 
-static map<Value*, string> collect_local_variable_metadata(Function& F);
+static map<Value*, string> collect_variable_metadata(Function &F);
 
 static void initializeGlobalHead(Module* M,
         GlobalVariable *gvar_struct_head,
@@ -1923,7 +1923,7 @@ static void makeAllocaLowFatPtr(Module *M, Instruction *I)
     if(option_symbolize){
         StructType* head_type = declear_global_types(M);
 
-        std::map<Value*, string> valueNameMap = collect_local_variable_metadata(*F);
+        std::map<Value*, string> valueNameMap = collect_variable_metadata(*F);
         string val_name;
 
         if(fix_len){
@@ -2555,7 +2555,7 @@ static string get_va_nm_tp(Function *F,
 
 
 
-static std::map<Value*, string> collect_local_variable_metadata(Function& F)
+static std::map<Value*, string> collect_variable_metadata(Function &F)
 {
     DebugInfoFinder Finder;
     Finder.processModule(*F.getParent());
@@ -2563,6 +2563,41 @@ static std::map<Value*, string> collect_local_variable_metadata(Function& F)
     map<DIType*, string> typedefInfo = getTypedefInfo(*F.getParent());
 
     std::map<Value*, string> valueNameMap;
+
+    for (GlobalVariable &Global : F.getParent()->getGlobalList()){
+
+        SmallVector<DIGlobalVariableExpression *, 1> GVEs;
+        Global.getDebugInfo(GVEs);
+        if(GVEs.size() == 1){
+            for (DIGlobalVariableExpression *GVE : GVEs){
+                DIGlobalVariable* GV = GVE->getVariable();
+                
+                if(!GV)
+                    continue;
+
+                string name = GV->getName().str();
+                if(name == "")
+                    continue;
+
+                if(!(GV->getType()))
+                    continue;
+
+                DIType* DIT = GV->getType().resolve();
+                string type = DITypeToString(DIT, typedefInfo);
+                valueNameMap[&Global] = name + "#" + type;
+            }
+        }
+    }
+
+
+//    for(DIGlobalVariableExpression* GVE: Finder.global_variables()){
+//        DIGlobalVariable* GV = GVE->getVariable();
+//        if(!GV)
+//            continue;
+//
+//
+//    }
+
 
     for (auto &BB: F)
     {
@@ -2788,7 +2823,7 @@ static void symbolize(Module *M){
         }
 
         // map[varibale] = metadata
-        std::map<Value*, string> valueNameMap = collect_local_variable_metadata(F);
+        std::map<Value*, string> valueNameMap = collect_variable_metadata(F);
 
         //errs()<<"================== "<<F.getName()<<"\n";
 
@@ -2889,7 +2924,7 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                     }
                 }
 
-                std::map<Value *, string> valueNameMap = collect_local_variable_metadata(F);
+                std::map<Value *, string> valueNameMap = collect_variable_metadata(F);
                 if (CallInst *call = dyn_cast<CallInst>(&I))
                 {
                     Function *called = call->getCalledFunction();
@@ -3156,7 +3191,7 @@ static void insert_iof_handler(Module *M, map<string, vector<pair<string, string
 
         //if(F.getName().str() != "JPEGSetupEncode") continue;
 
-        std::map<Value *, string> valueNameMap = collect_local_variable_metadata(F);
+        std::map<Value *, string> valueNameMap = collect_variable_metadata(F);
 
         string fnameStr = F.getName().str();
         Constant *FNameGEP = nullptr;
@@ -3375,7 +3410,8 @@ struct LowFat : public ModulePass
         addLowFatFuncs(&M);
 
         // PASS (4): Optimize lowfat_malloc() calls
-        /*if(!option_symbolize){
+        #if 0
+        if(!option_symbolize){
             for (auto &F: M)
             {
                 if (F.isDeclaration())
@@ -3387,7 +3423,8 @@ struct LowFat : public ModulePass
                 for (auto &I: dels)
                     I->eraseFromParent();
             }
-        }*/
+        }
+        #endif
 
         // added by wb
         if(option_symbolize){

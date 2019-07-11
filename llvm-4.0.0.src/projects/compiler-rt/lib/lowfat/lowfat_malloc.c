@@ -110,25 +110,29 @@ extern void *lowfat_malloc_index(size_t idx, size_t size);
 
 extern void *lowfat_malloc(size_t size)
 {
-    size_t idx = lowfat_heap_select(size);
+    size_t heapIdx = lowfat_heap_select(size);
     static bool disable = false;
     if (disable)
         return __libc_malloc(size);
 
-    void* result = lowfat_malloc_index(idx, size);
+    void* result = lowfat_malloc_index(heapIdx, size);
 
 #if LOWFAT_REVERSE_MEM_LAYOUT
-    if(idx != 0)
+    if(heapIdx != 0)
     {
-        size_t alloc_size = LOWFAT_SIZES[idx];
-        result = (uint8_t *)result + (alloc_size - size);
+        size_t alloc_size = LOWFAT_SIZES[heapIdx];
+        result = (uint8_t *) result + (alloc_size - size);
     }
 
 #endif
 
 #if 0
     disable = true;
-    fprintf(stderr, "BASE: %p, RES: %p, IDX: %zu, APPLY: %zu, SIZE: %zu\n", lowfat_base(result), result, idx, size, LOWFAT_SIZES[idx]);
+    fprintf(stderr, "lowfat_malloc BASE: %p, RES: %p, HEAP_IDX: %zu, APPLY: %zu, SIZE: %zu\n",
+            lowfat_base(result), result, heapIdx, size, LOWFAT_SIZES[heapIdx]);
+
+    fprintf(stderr, "CLZLL: %d, OBJIDX: %zu, IDX: %zu, IS_PTR: %zu\n",
+            __builtin_clzll(size), lowfat_objidx(result), lowfat_index(result), (size_t) lowfat_is_ptr(result));
     disable = false;
 #endif
 
@@ -142,6 +146,10 @@ extern void *lowfat_malloc(size_t size)
 any_t GLB_PTR_MAP = NULL;
 
 extern void lowfat_insert_map(size_t requiredSize, void* realBase, MALLOC_LIST_HEAD* global_head){
+
+    if(! lowfat_is_ptr(realBase)){
+        return;
+    }
 
     //fprintf(stderr, "lowfat_insert_map %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s\n", requiredSize, lowfat_base(realBase), global_head, global_head->name);
 
@@ -171,7 +179,6 @@ extern void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head)
 {
     void* result = lowfat_malloc(size);
     lowfat_insert_map(size, result, global_head);
-
     //fprintf(stderr, "lowfat_malloc_symbolize %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s\n", size, result, global_head, global_head->name);
 
     return result;

@@ -112,6 +112,7 @@ static inline _LOWFAT_CONST _LOWFAT_INLINE void *lowfat_base(const void *_ptr)
     size_t _idx = lowfat_index(_ptr);
 #ifndef LOWFAT_IS_POW2
     size_t _objidx = lowfat_objidx(_ptr);
+    //return (_objidx != 0) ? (void *)(_objidx * _LOWFAT_SIZES[_idx]) : (void *)(_LOWFAT_SIZES[_idx]);
     return (void *)(_objidx * _LOWFAT_SIZES[_idx]);
 #else   /* LOWFAT_IS_POW2 */
     return (void *)((uintptr_t)_ptr & _LOWFAT_MAGICS[_idx]);

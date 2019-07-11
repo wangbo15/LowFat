@@ -772,7 +772,12 @@ static const char* get_lowfat_locmsg(const void* baseptr){
  * @param baseptr
  * @param msg : ori_name#base_ptr_type#location
  */
-extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size0, const void *baseptr, const char* msg){
+extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size0, const void *baseptr, const char* msg)
+{
+
+    if(! lowfat_is_ptr(baseptr))
+        return;
+
 
     char **arr = NULL;
     int count = split(msg, '#', &arr);

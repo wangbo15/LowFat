@@ -448,6 +448,16 @@ extern void *lowfat_realloc(void *ptr, size_t size)
     return newptr;
 }
 
+extern void *lowfat_calloc_symbolize(size_t nmemb, size_t size, MALLOC_LIST_HEAD* global_head)
+{
+    void* result = lowfat_calloc(nmemb, size);
+
+    lowfat_insert_map(nmemb * size, result, global_head);
+
+    return result;
+}
+
+
 /*
  * LOWFAT calloc()
  */

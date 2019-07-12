@@ -2788,7 +2788,52 @@ static void process_lowfat_realloc(string glo_name,
 
     call->replaceAllUsesWith(symbolize_call);
     dels.push_back(call);
+}
 
+static void process_lowfat_calloc(string glo_name,
+                                   string val_name,
+                                   CallInst *call,
+                                   StructType * head_type,
+                                   GlobalValue* sizeGV,
+                                   vector<Instruction *> &dels)
+{
+    StringRef global_name = StringRef(glo_name);
+
+    //llvm::errs()<<"GLOBAL_NAME: "<<global_name<<"\n";
+
+    // new global value for the malloc
+    IRBuilder<> builder(call);
+
+    Module* M = call->getModule();
+    GlobalVariable *gvar_struct_head = new GlobalVariable(*M, head_type, false, GlobalValue::PrivateLinkage, 0, global_name);
+    gvar_struct_head->setAlignment(8);
+
+    initializeGlobalHead(M, gvar_struct_head, val_name, head_type, sizeGV);
+
+    Function *SymbolizeFunc = M->getFunction("lowfat_calloc_symbolize");
+    if(SymbolizeFunc == nullptr){
+
+        std::vector<Type*> vec;
+        vec.push_back(IntegerType::get(M->getContext(), 64));
+        vec.push_back(IntegerType::get(M->getContext(), 64));
+        vec.push_back(PointerType::get(head_type, 0));
+
+        FunctionType* func_type = FunctionType::get(
+                PointerType::get(IntegerType::get(M->getContext(), 8), 0),
+                vec,
+                false);
+
+        SymbolizeFunc = Function::Create(func_type, GlobalValue::ExternalLinkage, "lowfat_calloc_symbolize", M);
+        SymbolizeFunc->setCallingConv(CallingConv::C);
+    }
+
+    Value* nmemb = call->getArgOperand(0);
+    Value* size_param = call->getArgOperand(1);
+
+    Value *symbolize_call = builder.CreateCall(SymbolizeFunc, {nmemb, size_param, gvar_struct_head});
+
+    call->replaceAllUsesWith(symbolize_call);
+    dels.push_back(call);
 }
 
 
@@ -2878,13 +2923,15 @@ static void symbolize(Module *M){
                     }
                     const string &Name = called->getName().str();
 
-                    if(Name == "lowfat_malloc" || Name == "lowfat_realloc") // pick out lowfat_malloc or lowfat_realloc
+                    // pick out lowfat_malloc, lowfat_realloc or lowfat_calloc
+                    if(Name == "lowfat_malloc" || Name == "lowfat_realloc" || Name == "lowfat_calloc")
                     {
-                        Value* length_var;
+                        Value* length_var = nullptr;
                         if(Name == "lowfat_malloc")
                             length_var = dyn_cast<Value>(call->getArgOperand(0));
-                        else
+                        else // lowfat_realloc and lowfat_calloc
                             length_var = dyn_cast<Value>(call->getArgOperand(1));
+
 
                         string global_name = getGlobalName(M, fname);
 
@@ -2899,10 +2946,15 @@ static void symbolize(Module *M){
                                 if(name.startswith(header))
                                 {
                                     globalized = true;
-                                    if(Name == "lowfat_malloc")
+                                    if(Name == "lowfat_malloc") {
                                         process_lowfat_malloc(global_name, name.str(), call, head_type, GV, dels);
-                                    else
+                                    }
+                                    else if(Name == "lowfat_realloc") {
                                         process_lowfat_realloc(global_name, name.str(), call, head_type, GV, dels);
+                                    }
+                                    else { // lowfat_calloc
+                                        process_lowfat_calloc(global_name, name.str(), call, head_type, GV, dels);
+                                    }
                                 }
                             }
                         }

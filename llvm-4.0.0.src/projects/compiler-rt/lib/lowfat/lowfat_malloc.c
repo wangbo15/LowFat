@@ -151,7 +151,8 @@ extern void lowfat_insert_map(size_t requiredSize, void* realBase, MALLOC_LIST_H
         return;
     }
 
-    //fprintf(stderr, "lowfat_insert_map %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s\n", requiredSize, lowfat_base(realBase), global_head, global_head->name);
+    //fprintf(stderr, "lowfat_insert_map SIZE: %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s, RB: %p, GV_BASE: %p\n", \
+            requiredSize, lowfat_base(realBase), global_head, global_head->name, realBase, global_head->real_base);
 
     //TODO: add lock
     //lowfat_mutex_t mutex;
@@ -179,6 +180,7 @@ extern void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head)
 {
     void* result = lowfat_malloc(size);
     lowfat_insert_map(size, result, global_head);
+
     //fprintf(stderr, "lowfat_malloc_symbolize %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s\n", size, result, global_head, global_head->name);
 
     return result;
@@ -370,6 +372,16 @@ extern char *__strndup(const char *str, size_t n)
 	LOWFAT_ALIAS("lowfat_strndup");
 #endif      /* LOWFAT_NO_REPLACE_STD_MALLOC */
 
+extern void *lowfat_realloc_symbolize(void *ptr, size_t size, MALLOC_LIST_HEAD* global_head)
+{
+    void* result = lowfat_realloc(ptr, size);
+    lowfat_insert_map(size, result, global_head);
+
+    //fprintf(stderr, "lowfat_realloc_symbolize %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s\n", size, result, global_head, global_head->name);
+
+    return result;
+}
+
 /*
  * LOWFAT realloc()
  */
@@ -380,7 +392,7 @@ extern void *lowfat_realloc(void *ptr, size_t size)
         return lowfat_malloc(size);
     size_t oriSize = (size_t) ((uint8_t *) ptr - (uint8_t *)lowfat_base(ptr));
 
-    //fprintf(stderr, "REALLOC, PTR: %p, SIZE: %zu, ORI_SIZE: %zu\n", ptr, size, oriSize);
+    //fprintf(stderr, "lowfat_realloc, PTR: %p, SIZE: %zu, ORI_SIZE: %zu\n", ptr, size, oriSize);
 
     size_t idx = lowfat_index(ptr);
 

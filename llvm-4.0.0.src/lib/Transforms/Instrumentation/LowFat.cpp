@@ -2475,19 +2475,22 @@ static string get_va_nm_tp_inner(Function *F,
         //errs()<<"PHI !!!!!!!!!!!!!!\n";
 
         if(phi != phi->getIncomingValue(0) && scanned.find(phi->getIncomingValue(0)) == scanned.end()){
+            scanned.insert(phi->getIncomingValue(0));
+
             string firstNm = get_va_nm_tp_inner(F, phi->getIncomingValue(0), valueNameMap, structInfo, scanned);
             if(!startsWith(firstNm, "tmp_")){
                 return firstNm;
             }
-            scanned.insert(phi->getIncomingValue(0));
+
         }
 
         if(phi != phi->getIncomingValue(1) && scanned.find(phi->getIncomingValue(1)) == scanned.end()) {
+            scanned.insert(phi->getIncomingValue(1));
+
             string secondNm = get_va_nm_tp_inner(F, phi->getIncomingValue(1), valueNameMap, structInfo, scanned);
             if (!startsWith(secondNm, "tmp_")) {
                 return secondNm;
             }
-            scanned.insert(phi->getIncomingValue(1));
         }
 
         return tmp_name;

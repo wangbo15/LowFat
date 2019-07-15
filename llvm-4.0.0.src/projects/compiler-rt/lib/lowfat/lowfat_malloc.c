@@ -464,8 +464,6 @@ extern void *lowfat_calloc_symbolize(size_t nmemb, size_t size, MALLOC_LIST_HEAD
 extern void *lowfat_calloc(size_t nmemb, size_t size)
 {
     void *ptr = lowfat_malloc(nmemb * size);
-
-    // is not reflected by LOWFAT_REVERSE_MEM_LAYOUT
     memset(ptr, 0, nmemb * size);
     return ptr;
 }
@@ -570,11 +568,7 @@ extern void lowfat__ZdaPv(void *ptr) LOWFAT_ALIAS("lowfat_free");
  */
 extern char *lowfat_strdup(const char *str)
 {
-#ifdef LOWFAT_REVERSE_MEM_LAYOUT
-    fprintf(stderr, "lowfat_strdup NOT IMPLEMENTED\n");
-    abort();
-#endif
-
+    // TODO: The function is same for both reversed and normal Lowfat
     size_t str_size = lowfat_buffer_size(str);
     size_t len = strnlen(str, str_size);
     if (len == str_size)
@@ -590,12 +584,8 @@ extern char *lowfat_strdup(const char *str)
  */
 extern char *lowfat_strndup(const char *str, size_t n)
 {
-#ifdef LOWFAT_REVERSE_MEM_LAYOUT
-    fprintf(stderr, "lowfat_strndup NOT IMPLEMENTED\n");
-    abort();
-#endif
-
-    size_t str_size = lowfat_buffer_size(str);  //TODO for reverse
+    // TODO: The function is same for both reversed and normal Lowfat
+    size_t str_size = lowfat_buffer_size(str);
     size_t len = strnlen(str, (n > str_size? str_size: n));
     if (len == str_size)
         lowfat_oob_error(LOWFAT_OOB_ERROR_STRDUP, str + str_size,

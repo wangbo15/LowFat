@@ -2114,14 +2114,14 @@ static void initializeGlobalHead(Module* M,
 }
 
 
-static pair<string, string> parseBaseAndType(string BT)
+static pair<string, string> parseBaseAndType(string& BT)
 {
     size_t pos = BT.find("#");
-
     if(pos == string::npos)
     {
         return pair<string, string>(BT, "");
     }
+
     string name = BT.substr(0, pos);
     string type = BT.substr(pos + 1);
     return pair<string, string>(name, type);
@@ -2438,15 +2438,14 @@ static string get_va_nm_tp_inner(Function *F,
     string tmp_name = "tmp_" + F->getName().str() + "_" + std::to_string(counter);
     counter++;
 
-    if(valueNameMap.count(param)){
+    if(valueNameMap.find(param) != valueNameMap.end()){
         return valueNameMap[param];
     }
 
-    if(BitCastInst* bc = dyn_cast<BitCastInst>(param))
-    {
-        param = dyn_cast<Value>(bc->getOperand(0));
-        return get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
-    }
+    if(ConstantExpr* C = dyn_cast<ConstantExpr>(param))
+        return tmp_name;
+
+
     if(AllocaInst* al = dyn_cast<AllocaInst>(param))
     {
         param = al->getArraySize();
@@ -2473,11 +2472,13 @@ static string get_va_nm_tp_inner(Function *F,
         {
             return tmp_name;
         }
-        if(call->getCalledFunction()->getName().str() == "lowfat_base")
+        string CalledFunc = call->getCalledFunction()->getName().str();
+        if(CalledFunc == "lowfat_base" || CalledFunc  == "lowfat_stack_reverse" || CalledFunc  == "lowfat_stack_mirror")
         {
             param = call->getArgOperand(0);
             return get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
         }
+
         if(call->getNumUses() == 2)
         { // TODO
             for(User *U : call->users())
@@ -2508,9 +2509,6 @@ static string get_va_nm_tp_inner(Function *F,
         pair<string, string> basePair = parseBaseAndType(base_name_type);
 
 
-        //errs()<<"base_name_type "<<base_name_type<<"\n";
-        //GEP->dump();
-
         string base_name = basePair.first;
         string base_type = basePair.second;
 
@@ -2521,6 +2519,11 @@ static string get_va_nm_tp_inner(Function *F,
         }else if(GEP->getNumOperands() == 3)
         {
             offset = GEP->getOperand(2);
+        }
+
+        if(!offset) {
+            errs()<<"NULL PTR OFFSET OF GEP\n";
+            return tmp_name;
         }
 
         string ptr_name_type;
@@ -2569,7 +2572,7 @@ static string get_va_nm_tp_inner(Function *F,
                 {
                     //TODO
                     // for array constant index
-                    ptr_name_type = base_name + "[" + std::to_string(*(CI->getValue().getRawData())) + "]#UNKNOWNTYPE";
+                    ptr_name_type = base_name + "[" + std::to_string(*(CI->getValue().getRawData())) + "]#UNKNOWN";
                     return ptr_name_type;
                 }
 
@@ -2585,29 +2588,37 @@ static string get_va_nm_tp_inner(Function *F,
             return get_va_nm_tp_inner(F, offset, valueNameMap, structInfo, scanned);
         }
     }
-
     if(PHINode* phi = dyn_cast<PHINode>(param))
     {
         //TODO
         //errs()<<"PHI !!!!!!!!!!!!!!\n";
 
-        if(phi != phi->getIncomingValue(0) && scanned.find(phi->getIncomingValue(0)) == scanned.end()){
+        if(phi != phi->getIncomingValue(0) && scanned.find(phi->getIncomingValue(0)) == scanned.end())
+        {
             scanned.insert(phi->getIncomingValue(0));
 
+            phi->getIncomingValue(0)->dump();
+
             string firstNm = get_va_nm_tp_inner(F, phi->getIncomingValue(0), valueNameMap, structInfo, scanned);
-            if(!startsWith(firstNm, "tmp_")){
+
+            if(!startsWith(firstNm, "tmp_"))
                 return firstNm;
-            }
 
         }
 
-        if(phi != phi->getIncomingValue(1) && scanned.find(phi->getIncomingValue(1)) == scanned.end()) {
+        // only has one incoming
+        if(phi->getNumIncomingValues() == 1)
+            return tmp_name;
+
+        if(phi != phi->getIncomingValue(1) && scanned.find(phi->getIncomingValue(1)) == scanned.end())
+        {
             scanned.insert(phi->getIncomingValue(1));
 
             string secondNm = get_va_nm_tp_inner(F, phi->getIncomingValue(1), valueNameMap, structInfo, scanned);
-            if (!startsWith(secondNm, "tmp_")) {
+
+            if (!startsWith(secondNm, "tmp_"))
                 return secondNm;
-            }
+
         }
 
         return tmp_name;
@@ -2660,13 +2671,12 @@ static string get_va_nm_tp(Function *F,
                            map<Value *, string> &valueNameMap,
                            map<string, vector<pair<string, string>>> &structInfo){
 
-//    if(Instruction* I = dyn_cast<Instruction>(param))
-//        if(I->getDebugLoc()) {
-//            errs()<<"=================================================\n";
-//            if(I->getDebugLoc().getLine() == 11301){
-//                F->dump();
-//            }
-//        }
+#if 0
+    if(Instruction* I = dyn_cast<Instruction>(param))
+        if(I->getDebugLoc()) {
+            errs()<<"LINE: "<<I->getDebugLoc().getLine()<<"\n";
+        }
+#endif
 
     set<Value*> scannedByPhi;
     return get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scannedByPhi);
@@ -3129,13 +3139,13 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
             continue;
         }
 
-        //if(F.getName().str() != "PSDataColorContig") { continue;  }
+        //if(F.getName().str() != "archive_acl_from_text_w") { continue;  }
         //errs()<<"=========================== "<<F.getName()<<"\n";
+
 
         for (auto &BB: F) {
 
             for (auto &I: BB) {
-
                 //I.dump();
 
                 if(GetElementPtrInst* ge = dyn_cast<GetElementPtrInst>(&I)){
@@ -3169,10 +3179,9 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
 
                         if (GetElementPtrInst *gptr = dyn_cast<GetElementPtrInst>(pointer))
                         {
-
                             string base_name_type = get_va_nm_tp(&F, base, valueNameMap, structInfo);
-                            pair<string, string> basePair = parseBaseAndType(base_name_type);
 
+                            pair<string, string> basePair = parseBaseAndType(base_name_type);
                             string base_name = basePair.first;
                             string base_type = basePair.second;
 
@@ -3185,6 +3194,13 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                                 offset = gptr->getOperand(2);
                             }
 
+                            if(!offset)
+                            {
+                                errs()<<"NULL PTR OFFSET\n";
+                                gptr->dump();
+                                continue;
+                            }
+                            
                             string ptr_name_type;
                             if(ConstantInt* CI = getConstantIntVal(offset)){
 
@@ -3241,12 +3257,14 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                             pair<string, string> offsetPair = parseBaseAndType(ptr_name_type);
                             string ptr_name = offsetPair.first;
 
-//                            errs()<<"PROCESSING OFFSET:\n";
-//                            offset->dump();
-//                            errs()<<"OFFSET NAME: "<<ptr_name<<"\n";
-//                            errs()<<"PROCESSING BASE\n";
-//                            base->dump();
-//                            errs()<<"BASE NAME: "<<base_name<<"\n";
+                            #if 0
+                            errs()<<"PROCESSING OFFSET:\n";
+                            offset->dump();
+                            errs()<<"OFFSET NAME: "<<ptr_name<<"\n";
+                            errs()<<"PROCESSING BASE\n";
+                            base->dump();
+                            errs()<<"BASE NAME: "<<base_name<<"\n";
+                            #endif
 
                             if(base_type == "")
                             {
@@ -3659,7 +3677,9 @@ struct LowFat : public ModulePass
                 }
             }
 #endif
+
             symbolize(&M);
+
             replace_oob_checker(&M, structInfo);
 
             //memory_overlap_check(&M);

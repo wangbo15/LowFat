@@ -2148,6 +2148,7 @@ static map<DIType*, string> getTypedefInfo(Module &M){
     return typedefInfo;
 }
 
+
 static string DITypeToString(DIType* DIT, map<DIType*, string> &typedefMap)
 {
     //DIT->dump();
@@ -2213,16 +2214,128 @@ static ConstantInt* getConstantIntVal(Value* val){
 }
 
 
-static map<string, vector<pair<string, string>>> analysisTypeInfo(Module &M){
+static void processDICompositeType(DICompositeType* DICT, map<string, vector<pair<string, string>>>& structInfo, map<DIType*, string>& typedefInfo){
+    switch (DICT->getTag()){
+        case dwarf::DW_TAG_structure_type:
+        {
+            auto Elements = DICT->getElements();
+            if(!Elements)
+                return;
+
+            string StructName = DICT->getName().str();
+            if(StructName == "")
+                return;
+
+            if(structInfo.find(StructName) != structInfo.end())
+                return;
+
+            structInfo[StructName] = vector<pair<string, string>>();
+
+            for(auto E: Elements){
+                if(DIDerivedType* DDT = dyn_cast<DIDerivedType>(E)){
+
+                    if(DDT->getTag() != dwarf::DW_TAG_member)
+                        continue;
+
+                    if(DDT->getName().str() == "" || !DDT->getRawBaseType())
+                        continue;
+
+                    pair<string, string> NameTypePair;
+                    NameTypePair.first = DDT->getName();
+
+                    if(DDT->getBaseType()){
+                        string type = DITypeToString(DDT->getBaseType().resolve(), typedefInfo);
+                        NameTypePair.second = type;
+                    } else {
+                        NameTypePair.second = "UNKOWN_MEMBER";
+                    }
+
+                    structInfo[StructName].push_back(NameTypePair);
+                }
+
+                //errs()<<"ELEMENTS >>>> \n";
+                //E->dump();
+            }
+
+        }
+
+    }
+}
+
+
+static void processInstMeteInfo(DbgInfoIntrinsic *I, map<string, vector<pair<string, string>>>& structInfo, map<DIType*, string>& typedefInfo) {
+    DILocalVariable *DILV = nullptr;
+    if(DbgDeclareInst* DDI = dyn_cast<DbgDeclareInst>(I)) {
+        DILV = DDI->getVariable();
+    } else if (DbgValueInst* DVI = dyn_cast<DbgValueInst>(I)) {
+        DILV = DVI->getVariable();
+    } else {
+        return;
+    }
+
+    if(!DILV)
+        return;
+
+    auto TP = DILV->getType();
+    if(!TP)
+        return;
+
+    DIType* DIT = TP.resolve();
+    if(isa<DIBasicType>(DIT))
+        return;
+
+    string TypeName = DIT->getName().str();
+    if(structInfo.find(TypeName) != structInfo.end())
+        return;
+
+    //errs()<<"UNKNOW TYPE: "<<TypeName<<"\n";
+    //DIT->dump();
+
+    if(DICompositeType* DICT = dyn_cast<DICompositeType>(DIT)){
+        processDICompositeType(DICT, structInfo, typedefInfo);
+    }
+
+}
+
+static void completeStructInfoByIterateInsts(Module &M, map<string, vector<pair<string, string>>>& structInfo) {
+
+    map<DIType*, string> typedefInfo = getTypedefInfo(M);
+
+    for(auto& F : M)
+    {
+        if (F.isDeclaration())
+            continue;
+
+        for(auto& BB: F){
+            for(auto & I: BB)
+            {
+                if(DbgInfoIntrinsic* II = dyn_cast<DbgInfoIntrinsic>(&I))
+                {
+                    if(Function *F = II->getCalledFunction())
+                    {
+                        if(F->getName().startswith("llvm."))
+                        {
+                            processInstMeteInfo(II, structInfo, typedefInfo);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+static map<string, vector<pair<string, string>>> analysisTypeInfo(Module &M) {
     DebugInfoFinder Finder;
     Finder.processModule(M);
+
+    //errs()<<"SIZE: "<<Finder.type_count()<<"\n";
 
     map<string, vector<pair<string, string>>> structInfo;
 
     map<DIType*, string> typedefInfo = getTypedefInfo(M);
     for (auto i : Finder.types())
     {
-        //errs()<<"\n";
+        //errs()<<"TYPES: \n";
         //i->dump();
 
         if(DIBasicType* BT = dyn_cast<DIBasicType>(i))
@@ -2264,22 +2377,23 @@ static map<string, vector<pair<string, string>>> analysisTypeInfo(Module &M){
                         }
                     }
 
-                    pair<string, string> nameType;
-                    nameType.first = DT->getName().str();
+                    // <name, type>
+                    pair<string, string> NameTypePair;
+                    NameTypePair.first = DT->getName().str();
 
                     if(DT->getBaseType())
                     {
-                        nameType.second = DITypeToString(DT->getBaseType().resolve(), typedefInfo);
+                        NameTypePair.second = DITypeToString(DT->getBaseType().resolve(), typedefInfo);
                     } else
                     {
-                        nameType.second = "UNKOWN_MEMBER";
+                        NameTypePair.second = "UNKOWN_MEMBER";
                     }
 
                     //errs()<<"MEMBER >>>>>>>>\n";
-                    //errs()<<nameType.first<<" : "<<nameType.second<<"\n";
+                    //errs()<<NameTypePair.first<<" : "<<NameTypePair.second<<"\n";
 
                     if(key != "")
-                        structInfo[key].push_back(nameType);
+                        structInfo[key].push_back(NameTypePair);
                 }
             } else if(DT->getTag() == dwarf::DW_TAG_typedef)
             {
@@ -2292,6 +2406,9 @@ static map<string, vector<pair<string, string>>> analysisTypeInfo(Module &M){
             }
         }
     }
+
+    completeStructInfoByIterateInsts(M, structInfo);
+
     return structInfo;
 }
 
@@ -3532,16 +3649,16 @@ struct LowFat : public ModulePass
 
         // added by wb
         if(option_symbolize){
+
             map<string, vector<pair<string, string>>> structInfo = analysisTypeInfo(M);
-
-//            for(auto ii: structInfo){
-//                errs()<<">>>>>>> "<<ii.first<<"\n";
-//                for(auto i: ii.second){
-//                    errs()<<"\t\t"<<i.first<<" "<<i.second<<"\n";
-//                }
-//            }
-
-
+#if 0
+            for(auto ii: structInfo){
+                errs()<<">>>>>>> "<<ii.first<<"\n";
+                for(auto i: ii.second){
+                    errs()<<"\t\t"<<i.first<<" "<<i.second<<"\n";
+                }
+            }
+#endif
             symbolize(&M);
             replace_oob_checker(&M, structInfo);
 
@@ -3550,6 +3667,8 @@ struct LowFat : public ModulePass
             // integer overflow handler
             insert_iof_handler(&M, structInfo);
         }
+
+
 
         if (option_debug)
         {

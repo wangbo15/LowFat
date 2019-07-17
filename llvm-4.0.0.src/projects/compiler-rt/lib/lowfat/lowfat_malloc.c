@@ -151,8 +151,8 @@ extern void lowfat_insert_map(size_t requiredSize, void* realBase, MALLOC_LIST_H
         return;
     }
 
-    //fprintf(stderr, "lowfat_insert_map SIZE: %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s, RB: %p, GV_BASE: %p\n", \
-            requiredSize, lowfat_base(realBase), global_head, global_head->name, realBase, global_head->real_base);
+    //fprintf(stderr, "lowfat_insert_map SIZE: %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s, RB: %p, GV_BASE: %p\n",
+    //      requiredSize, lowfat_base(realBase), global_head, global_head->name, realBase, global_head->real_base);
 
     //TODO: add lock
     //lowfat_mutex_t mutex;

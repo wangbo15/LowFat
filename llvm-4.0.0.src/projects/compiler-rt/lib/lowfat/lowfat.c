@@ -811,8 +811,9 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
             size_t value = map_get(GLB_PTR_MAP, lf_base);
             if(value == 0x0)
             {
-                fprintf(stderr, "lowfat_oob_check_verbose MAP_MISSING, PTR: %p, BASE: %p, MAP SIZE: %d\n",
-                        baseptr, lowfat_base(baseptr), map_size(GLB_PTR_MAP));
+                fprintf(stderr, "lowfat_oob_check_verbose MAP_MISSING, PTR: %p, BASE: %p, MAP SIZE: %d\n"
+                                "lowfat_oob_check_verbose MESSAGE: %s\n",
+                        baseptr, lowfat_base(baseptr), map_size(GLB_PTR_MAP), msg);
             } else
             {
                 MALLOC_LIST_HEAD* global_head = (MALLOC_LIST_HEAD*) value;

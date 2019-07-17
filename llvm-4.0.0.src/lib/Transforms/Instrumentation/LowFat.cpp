@@ -2597,7 +2597,7 @@ static string get_va_nm_tp_inner(Function *F,
         {
             scanned.insert(phi->getIncomingValue(0));
 
-            phi->getIncomingValue(0)->dump();
+            //phi->getIncomingValue(0)->dump();
 
             string firstNm = get_va_nm_tp_inner(F, phi->getIncomingValue(0), valueNameMap, structInfo, scanned);
 
@@ -3090,8 +3090,15 @@ static void symbolize(Module *M){
                         }
 
                         if(!globalized)
-                            errs()<<"Un-globalized "<< Name <<"()\n";
-
+                        {
+                            errs() << ">>>> Un-globalized " << Name << "()\n";
+                            for (auto *CU : M->debug_compile_units()) {
+                                if(CU->isOptimized()) {
+                                    errs() << ">>>> WARNING: The module is optimized\n";
+                                    break;
+                                }
+                            }
+                        }
 #if 0
                         // 2. otherwise
                         if(ConstantInt* constant = dyn_cast<ConstantInt>(length_var)){
@@ -3127,6 +3134,66 @@ static void symbolize(Module *M){
 
 }// end static void symbolize(Module *M)
 
+static void insert_verbose_checker(Function &F,
+                                    CallInst* call,
+                                    string offset_name,
+                                    string base_type,
+                                    vector<Instruction *> &dels)
+{
+    const DebugLoc &location = call->getDebugLoc();
+    if(!location)
+    {
+        errs()<<"NO DEBUG INFO !!!!\n";
+        return;
+    }
+
+    Module *M = F.getParent();
+    int line = location.getLine();
+    string loc = M->getName().str() + ":" + F.getName().str() + ":" + to_string(line);
+
+    string msg = offset_name + "#" + base_type + "#" + loc;
+
+    //errs() << "=============================== OOB CHECKING " << msg << "\n";
+
+    Constant *msgConst = ConstantDataArray::getString(M->getContext(), msg, true);
+
+    // plus one for \0
+    size_t len = msg.length() + 1;
+
+    Type *arr_type = ArrayType::get(IntegerType::get(M->getContext(), 8), len);
+    GlobalVariable *gvar_name = new GlobalVariable(*M,
+                                                   arr_type,
+                                                   true,
+                                                   GlobalValue::PrivateLinkage,
+                                                   msgConst,
+                                                   ".str");
+    gvar_name->setAlignment(1);
+
+    ConstantInt *zero = ConstantInt::get(M->getContext(), APInt(32, StringRef("0"), 10));
+
+    std::vector<Constant *> indices;
+    indices.push_back(zero);
+    indices.push_back(zero);
+
+    Constant *get_ele_ptr = ConstantExpr::getGetElementPtr(arr_type, gvar_name, indices);
+
+    IRBuilder<> builder(call);
+    Constant *func = M->getOrInsertFunction("lowfat_oob_check_verbose",
+                                            builder.getVoidTy(), builder.getInt32Ty(),
+                                            builder.getInt8PtrTy(),
+                                            builder.getInt64Ty(), builder.getInt8PtrTy(),
+                                            builder.getInt8PtrTy(), nullptr);
+
+
+    Value *newCall = builder.CreateCall(func,
+                                        {call->getArgOperand(0), call->getArgOperand(1),
+                                         call->getArgOperand(2), call->getArgOperand(3),
+                                         get_ele_ptr});
+
+    call->replaceAllUsesWith(newCall);
+    dels.push_back(call);
+}
+
 static void replace_oob_checker(Module *M, map<string, vector<pair<string, string>>> &structInfo){
     vector<Instruction *> dels;
 
@@ -3135,18 +3202,35 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
             continue;
 
         // skip lowfat functions
-        if(F.getName().str().rfind("lowfat_", 0) == 0) {
+        if(F.getName().str().rfind("lowfat_", 0) == 0)
             continue;
-        }
 
-        //if(F.getName().str() != "archive_acl_from_text_w") { continue;  }
+
+        //if(F.getName().str() != "put_pixel_rows") { continue;  }
         //errs()<<"=========================== "<<F.getName()<<"\n";
-
 
         for (auto &BB: F) {
 
             for (auto &I: BB) {
-                //I.dump();
+                if (!I.getDebugLoc())
+                    continue;
+
+                if (I.getDebugLoc().getLine() != 145)
+                        continue;
+
+                I.dump();
+
+                if (option_debug)
+                {
+                    if(!M->getName().startswith("/usr/")) {
+                        string outName(M->getName());
+                        outName += ".mid.out.lowfat.ll";
+                        std::error_code errInfo;
+                        raw_fd_ostream out(outName.c_str(), errInfo, sys::fs::F_None);
+                        M->print(out, nullptr);
+                    }
+                }
+
 
                 if(GetElementPtrInst* ge = dyn_cast<GetElementPtrInst>(&I)){
                     if(ge->user_empty()){
@@ -3156,184 +3240,150 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                 }
 
                 std::map<Value *, string> valueNameMap = collect_variable_metadata(F);
-                if (CallInst *call = dyn_cast<CallInst>(&I))
+
+                CallInst *call = dyn_cast<CallInst>(&I);
+                if (!call)
+                    continue;
+
+                Function *called = call->getCalledFunction();
+                if (called == nullptr || !called->hasName())
+                    continue;
+
+
+                const string &Name = called->getName().str();
+                if (Name != "lowfat_oob_check"){
+                    continue;
+                }
+
+                errs()<<">>>>>>>> lowfat_oob_check\n";
+
+                Value *pointer = call->getArgOperand(1);
+
+                Value *base = call->getArgOperand(3);
+
+                if (BitCastInst *castInst = dyn_cast<BitCastInst>(pointer))
                 {
-                    Function *called = call->getCalledFunction();
-                    if (called == nullptr || !called->hasName())
+                    pointer = castInst->getOperand(0);
+                }
+
+                string offset_name = "";
+
+                string base_name_type = get_va_nm_tp(&F, base, valueNameMap, structInfo);
+                pair<string, string> basePair = parseBaseAndType(base_name_type);
+                string base_name = basePair.first;
+                string base_type = basePair.second;
+                if(base_type == "") // Unable to replace oob_checker
+                {
+                    errs()<<">>>> ILLEGAL BASE NAME: "<<base_name<<"\n";
+                    errs()<<">>>> CURRENT CALL INST:\n";
+                    call->dump();
+                    if(call->getDebugLoc())
+                        errs()<<">>>> "<<M->getName()<<":"<<call->getDebugLoc().getLine()<<"\n";
+
+                    continue;
+                }
+
+                if(PHINode* pn = dyn_cast<PHINode>(pointer))
+                {
+
+                    string pointer_nm_tp = get_va_nm_tp(&F, pointer, valueNameMap, structInfo);
+                    pair<string, string> pointerPair = parseBaseAndType(base_name_type);
+                    offset_name = pointerPair.first;
+
+                } else if (GetElementPtrInst *gptr = dyn_cast<GetElementPtrInst>(pointer))
+                {
+
+
+                    errs()<<">>>>>>>> base_name_type: "<<base_name_type<<"\n";
+
+                    Value *offset = nullptr;
+                    if (gptr->getNumOperands() == 2)
                     {
+                        offset = gptr->getOperand(1);
+                    } else if (gptr->getNumOperands() == 3)
+                    {
+                        offset = gptr->getOperand(2);
+                    }
+
+                    if(!offset)
+                    {
+                        errs()<<"NULL PTR OFFSET\n";
+                        gptr->dump();
                         continue;
                     }
 
-                    const string &Name = called->getName().str();
-                    if (Name == "lowfat_oob_check")
+                    string offset_name_type;
+                    if(ConstantInt* CI = getConstantIntVal(offset))
                     {
-                        
-                        Value *pointer = call->getArgOperand(1);
+                        uint64_t rawData = *(CI->getValue().getRawData());
+                        auto *PTy = dyn_cast<PointerType>(gptr->getPointerOperandType());
+                        if(!PTy)
+                            continue;
 
-                        Value *base = call->getArgOperand(3);
-
-                        if (BitCastInst *castInst = dyn_cast<BitCastInst>(pointer))
+                        if(PTy->getPointerElementType()->isStructTy())
                         {
-                            pointer = castInst->getOperand(0);
-                        }
-
-                        if (GetElementPtrInst *gptr = dyn_cast<GetElementPtrInst>(pointer))
-                        {
-                            string base_name_type = get_va_nm_tp(&F, base, valueNameMap, structInfo);
-
-                            pair<string, string> basePair = parseBaseAndType(base_name_type);
-                            string base_name = basePair.first;
-                            string base_type = basePair.second;
-
-                            Value *offset = nullptr;
-                            if(gptr->getNumOperands() == 2)
+                            // for struct member
+                            string connection;
+                            if(endsWith(base_type, "*"))
                             {
-                                offset = gptr->getOperand(1);
-                            }else if(gptr->getNumOperands() == 3)
-                            {
-                                offset = gptr->getOperand(2);
-                            }
-
-                            if(!offset)
-                            {
-                                errs()<<"NULL PTR OFFSET\n";
-                                gptr->dump();
-                                continue;
-                            }
-                            
-                            string ptr_name_type;
-                            if(ConstantInt* CI = getConstantIntVal(offset)){
-
-                                uint64_t rawData = *(CI->getValue().getRawData());
-
-                                auto *PTy = dyn_cast<PointerType>(gptr->getPointerOperandType());
-                                if(PTy)
-                                {
-
-                                    if(PTy->getPointerElementType()->isStructTy())
-                                    {
-                                        // for struct member
-                                        string connection;
-
-                                        if(endsWith(base_type, "*"))
-                                        {
-                                            connection = "->";
-                                            //TODO: only support One-Dimension pointer
-                                        } else
-                                        {
-                                            connection = ".";
-                                        }
-                                        string removePtr = getPureType(base_type);
-
-                                        if(structInfo.find(removePtr) != structInfo.end() && rawData < structInfo[removePtr].size())
-                                        {
-                                            string memberName = structInfo[removePtr][rawData].first;
-                                            string memberType = structInfo[removePtr][rawData].second;
-
-                                            ptr_name_type = base_name + connection + memberName + "#" + memberType;
-                                        } else
-                                        {
-                                            errs()<<">>>>>>>>> unknown struct information: "<<base_type<<" IDX: "<<rawData<<"\n";
-                                            continue;
-                                        }
-
-                                    } else
-                                    {
-                                        // for array constant index
-                                        string type = typeToStr(CI->getType());
-                                        ptr_name_type = std::to_string(*(CI->getValue().getRawData())) + "#" + type;
-                                    }
-
-                                } else
-                                {
-                                    continue;
-                                }
-
+                                connection = "->";
+                                //TODO: only support One-Dimension pointer
                             } else
                             {
-                                ptr_name_type = get_va_nm_tp(&F, offset, valueNameMap, structInfo);
+                                connection = ".";
                             }
+                            string removePtr = getPureType(base_type);
 
-                            pair<string, string> offsetPair = parseBaseAndType(ptr_name_type);
-                            string ptr_name = offsetPair.first;
-
-                            #if 0
-                            errs()<<"PROCESSING OFFSET:\n";
-                            offset->dump();
-                            errs()<<"OFFSET NAME: "<<ptr_name<<"\n";
-                            errs()<<"PROCESSING BASE\n";
-                            base->dump();
-                            errs()<<"BASE NAME: "<<base_name<<"\n";
-                            #endif
-
-                            if(base_type == "")
+                            if(structInfo.find(removePtr) != structInfo.end() && rawData < structInfo[removePtr].size())
                             {
-                                errs()<<"ILLEGAL BASE NAME: "<<base_name<<"\n";
-                                errs()<<"CURRENT CALL INST:\n";
-                                call->dump();
-                                errs()<<"CURRENT BASE PTR:\n";
-                                base->dump();
-                                errs()<<"CURRENT OFFSET PTR:\n";
-                                offset->dump();
+                                string memberName = structInfo[removePtr][rawData].first;
+                                string memberType = structInfo[removePtr][rawData].second;
+
+                                offset_name_type = base_name + connection + memberName + "#" + memberType;
+                            } else
+                            {
+                                errs()<<">>>>>>>>> unknown struct information: "<<base_type<<" IDX: "<<rawData<<"\n";
                                 continue;
                             }
 
-                            const DebugLoc &location = call->getDebugLoc();
-
-                            if(!location)
-                            {
-                                errs()<<"NO DEBUG INFO !!!!\n";
-                                continue;
-                            }
-
-                            int line = location.getLine();
-                            string loc = M->getName().str() + ":" + F.getName().str() + ":" + to_string(line);
-
-                            string msg = ptr_name + "#" + base_type + "#" + loc;
-
-                            //errs() << "=============================== OOB CHECKING " << msg << "\n";
-
-                            Constant *msgConst = ConstantDataArray::getString(M->getContext(), msg, true);
-
-                            // plus one for \0
-                            size_t len = msg.length() + 1;
-
-                            Type *arr_type = ArrayType::get(IntegerType::get(M->getContext(), 8), len);
-                            GlobalVariable *gvar_name = new GlobalVariable(*M,
-                                                                           arr_type,
-                                                                           true,
-                                                                           GlobalValue::PrivateLinkage,
-                                                                           msgConst,
-                                                                           ".str");
-                            gvar_name->setAlignment(1);
-
-                            ConstantInt *zero = ConstantInt::get(M->getContext(), APInt(32, StringRef("0"), 10));
-
-                            std::vector<Constant *> indices;
-                            indices.push_back(zero);
-                            indices.push_back(zero);
-
-                            Constant *get_ele_ptr = ConstantExpr::getGetElementPtr(arr_type, gvar_name, indices);
-
-                            IRBuilder<> builder(call);
-                            Constant *func = M->getOrInsertFunction("lowfat_oob_check_verbose",
-                                                                    builder.getVoidTy(), builder.getInt32Ty(),
-                                                                    builder.getInt8PtrTy(),
-                                                                    builder.getInt64Ty(), builder.getInt8PtrTy(),
-                                                                    builder.getInt8PtrTy(), nullptr);
-
-
-                            Value *newCall = builder.CreateCall(func,
-                                                                {call->getArgOperand(0), call->getArgOperand(1),
-                                                                 call->getArgOperand(2), call->getArgOperand(3),
-                                                                 get_ele_ptr});
-
-                            call->replaceAllUsesWith(newCall);
-                            dels.push_back(call);
-
+                        } else
+                        {
+                            // for array constant index
+                            string type = typeToStr(CI->getType());
+                            offset_name_type = std::to_string(*(CI->getValue().getRawData())) + "#" + type;
                         }
+
+                    } else
+                    {
+                        offset_name_type = get_va_nm_tp(&F, offset, valueNameMap, structInfo);
                     }
+
+                    pair<string, string> offsetPair = parseBaseAndType(offset_name_type);
+                    offset_name = offsetPair.first;
+
+                    #if 0
+                    errs()<<"PROCESSING OFFSET:\n";
+                    offset->dump();
+                    errs()<<"OFFSET NAME: "<<offset_name<<"\n";
+                    errs()<<"PROCESSING BASE\n";
+                    base->dump();
+                    errs()<<"BASE NAME: "<<base_name<<"\n";
+                    #endif
+
+                } else {
+                    errs()<<">>>> unrecognized ptr type in lowfat_oob_check()\n";
+                    pointer->dump();
+                    continue;
                 }
+
+                if(offset_name == "")
+                {
+                    errs()<<">>>> ERROR OFFSET_NAME\n";
+                    continue;
+                }
+
+                insert_verbose_checker(F, call, offset_name, base_type, dels);
+
             }
         }
     }//end for(auto &F: *M)
@@ -3546,11 +3596,13 @@ struct LowFat : public ModulePass
     {
         if (option_debug)
         {
-            string outName(M.getName());
-            outName += ".in.lowfat.ll";
-            std::error_code errInfo;
-            raw_fd_ostream out(outName.c_str(), errInfo, sys::fs::F_None);
-            M.print(out, nullptr);
+            if(!M.getName().startswith("/usr/")){
+                string outName(M.getName());
+                outName += ".in.lowfat.ll";
+                std::error_code errInfo;
+                raw_fd_ostream out(outName.c_str(), errInfo, sys::fs::F_None);
+                M.print(out, nullptr);
+            }
         }
 
         // Read the blacklist file (if it exists)
@@ -3692,19 +3744,20 @@ struct LowFat : public ModulePass
 
         if (option_debug)
         {
-            string outName(M.getName());
-            outName += ".out.lowfat.ll";
-            std::error_code errInfo;
-            raw_fd_ostream out(outName.c_str(), errInfo, sys::fs::F_None);
-            M.print(out, nullptr);
+            if(!M.getName().startswith("/usr/")) {
+                string outName(M.getName());
+                outName += ".out.lowfat.ll";
+                std::error_code errInfo;
+                raw_fd_ostream out(outName.c_str(), errInfo, sys::fs::F_None);
+                M.print(out, nullptr);
 
-            string errs;
-            raw_string_ostream rso(errs);
-            if (verifyModule(M, &rso))
-            {
-                fprintf(stderr, "LowFat generated broken IR!\n");
-                fprintf(stderr, "%s\n", errs.c_str());
-                abort();
+                string errs;
+                raw_string_ostream rso(errs);
+                if (verifyModule(M, &rso)) {
+                    fprintf(stderr, "LowFat generated broken IR!\n");
+                    fprintf(stderr, "%s\n", errs.c_str());
+                    abort();
+                }
             }
         }
 

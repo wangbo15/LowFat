@@ -3289,9 +3289,6 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                 } else if (GetElementPtrInst *gptr = dyn_cast<GetElementPtrInst>(pointer))
                 {
 
-
-                    errs()<<">>>>>>>> base_name_type: "<<base_name_type<<"\n";
-
                     Value *offset = nullptr;
                     if (gptr->getNumOperands() == 2)
                     {

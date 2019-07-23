@@ -2413,21 +2413,32 @@ static map<string, vector<pair<string, string>>> analysisTypeInfo(Module &M) {
 }
 
 
+static map<Value*, string> ValueNameCache;
+
 static string get_va_nm_tp_inner(Function *F,
         Value *param,
         map<Value *, string> &valueNameMap,
         map<string, vector<pair<string, string>>> &structInfo,
         set<Value*> &scanned)
 {
+    if(ValueNameCache.find(param) != ValueNameCache.end()) {
+        return ValueNameCache[param];
+    }
 
 
     if(ConstantInt* CI = dyn_cast<ConstantInt>(param)){
         string type = typeToStr(param->getType());
-        return std::to_string(*CI->getValue().getRawData()) + "#" + type;
+        string res = std::to_string(*CI->getValue().getRawData()) + "#" + type;
+
+        ValueNameCache[CI] = res;
+        return res;
     }
     if(ConstantPointerNull* CPN = dyn_cast<ConstantPointerNull>(param)){
         string type = typeToStr(param->getType());
-        return "NULL#" + type;
+        string res = "NULL#" + type;
+
+        ValueNameCache[CPN] = res;
+        return res;
     }
 
     //errs()<<"----------------------  get_va_nm_tp_inner\n";
@@ -2439,17 +2450,23 @@ static string get_va_nm_tp_inner(Function *F,
     counter++;
 
     if(valueNameMap.find(param) != valueNameMap.end()){
-        return valueNameMap[param];
+        string res = valueNameMap[param];
+        ValueNameCache[param] = res;
+        return res;
     }
 
-    if(ConstantExpr* C = dyn_cast<ConstantExpr>(param))
+    if(ConstantExpr* C = dyn_cast<ConstantExpr>(param)) {
+        ValueNameCache[C] = tmp_name;
         return tmp_name;
-
+    }
 
     if(AllocaInst* al = dyn_cast<AllocaInst>(param))
     {
         param = al->getArraySize();
-        return get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
+        string res = get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
+
+        ValueNameCache[al] = res;
+        return res;
     }
     if(CastInst* castInst = dyn_cast<CastInst>(param))
     {
@@ -2459,24 +2476,31 @@ static string get_va_nm_tp_inner(Function *F,
 
         if(isa<ConstantInt>(castInst->getOperand(0)))
         {
-            return tmp_name + "_CONSTINT";
+            string res = tmp_name + "_CONSTINT";
+            ValueNameCache[castInst] = res;
+            return res;
         } else
         {
             param = castInst->getOperand(0);
-            return get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
+            string res = get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
+            ValueNameCache[castInst] = res;
+            return res;
         }
     }
     if(CallInst* call = dyn_cast<CallInst>(param))
     {
         if (!call->getCalledFunction())
         {
+            ValueNameCache[call] = tmp_name;
             return tmp_name;
         }
         string CalledFunc = call->getCalledFunction()->getName().str();
         if(CalledFunc == "lowfat_base" || CalledFunc  == "lowfat_stack_reverse" || CalledFunc  == "lowfat_stack_mirror")
         {
             param = call->getArgOperand(0);
-            return get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
+            string res = get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
+            ValueNameCache[call] = res;
+            return res;
         }
 
         if(call->getNumUses() == 2)
@@ -2488,8 +2512,11 @@ static string get_va_nm_tp_inner(Function *F,
                 if (auto I = dyn_cast<BitCastInst>(U))
                 {
                     param = I;
-                    if(valueNameMap.count(param))
-                        return valueNameMap[param];
+                    if(valueNameMap.count(param)) {
+                        string res = valueNameMap[param];
+                        ValueNameCache[param] = res;
+                        return res;
+                    }
 
                 }
             }
@@ -2499,7 +2526,9 @@ static string get_va_nm_tp_inner(Function *F,
     if(LoadInst* load = dyn_cast<LoadInst>(param))
     {
         param = load->getPointerOperand();
-        return get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
+        string res = get_va_nm_tp_inner(F, param, valueNameMap, structInfo, scanned);
+        ValueNameCache[load] = res;
+        return res;
     }
     if(GetElementPtrInst* GEP = dyn_cast<GetElementPtrInst>(param))
     {
@@ -2523,6 +2552,7 @@ static string get_va_nm_tp_inner(Function *F,
 
         if(!offset) {
             errs()<<"NULL PTR OFFSET OF GEP\n";
+            ValueNameCache[GEP] = tmp_name;
             return tmp_name;
         }
 
@@ -2560,11 +2590,13 @@ static string get_va_nm_tp_inner(Function *F,
                         ptr_name_type = base_name + connection + memberName + "#" + memberType;
 
                         //errs()<<"ptr_name_type: "<< ptr_name_type <<"  base_type: "<<base_type<<"\n";
-
+                        ValueNameCache[GEP] = ptr_name_type;
                         return ptr_name_type;
                     } else
                     {
                         errs()<<">>>>>>>>> unknown struct information: "<<base_type<<" IDX: "<<rawData<<"\n";
+
+                        ValueNameCache[GEP] = tmp_name;
                         return tmp_name;
                     }
 
@@ -2573,11 +2605,13 @@ static string get_va_nm_tp_inner(Function *F,
                     //TODO
                     // for array constant index
                     ptr_name_type = base_name + "[" + std::to_string(*(CI->getValue().getRawData())) + "]#UNKNOWN";
+                    ValueNameCache[GEP] = ptr_name_type;
                     return ptr_name_type;
                 }
 
             } else
             {
+                ValueNameCache[GEP] = tmp_name;
                 return tmp_name;
             }
 
@@ -2585,9 +2619,11 @@ static string get_va_nm_tp_inner(Function *F,
         else
         {
             // TODO
-            return get_va_nm_tp_inner(F, offset, valueNameMap, structInfo, scanned);
+            string res = get_va_nm_tp_inner(F, offset, valueNameMap, structInfo, scanned);
+            ValueNameCache[GEP] = res;
+            return res;
         }
-    }
+    } // end if GEP
     if(PHINode* phi = dyn_cast<PHINode>(param))
     {
         //TODO
@@ -2601,14 +2637,18 @@ static string get_va_nm_tp_inner(Function *F,
 
             string firstNm = get_va_nm_tp_inner(F, phi->getIncomingValue(0), valueNameMap, structInfo, scanned);
 
-            if(!startsWith(firstNm, "tmp_"))
+            if(!startsWith(firstNm, "tmp_")) {
+                ValueNameCache[phi] = firstNm;
                 return firstNm;
+            }
 
         }
 
         // only has one incoming
-        if(phi->getNumIncomingValues() == 1)
+        if(phi->getNumIncomingValues() == 1){
+            ValueNameCache[phi] = tmp_name;
             return tmp_name;
+        }
 
         if(phi != phi->getIncomingValue(1) && scanned.find(phi->getIncomingValue(1)) == scanned.end())
         {
@@ -2616,11 +2656,12 @@ static string get_va_nm_tp_inner(Function *F,
 
             string secondNm = get_va_nm_tp_inner(F, phi->getIncomingValue(1), valueNameMap, structInfo, scanned);
 
-            if (!startsWith(secondNm, "tmp_"))
+            if (!startsWith(secondNm, "tmp_")) {
+                ValueNameCache[phi] = secondNm;
                 return secondNm;
-
+            }
         }
-
+        ValueNameCache[phi] = tmp_name;
         return tmp_name;
     }
     if(BinaryOperator* bo = dyn_cast<BinaryOperator>(param))
@@ -2641,28 +2682,36 @@ static string get_va_nm_tp_inner(Function *F,
             rightName = rightName.substr(0, idx);
         }
 
-
+        string res;
         switch (bo->getOpcode())
         {
             case Instruction::Add:
-                return "(" + leftName + " + " + rightName + ")";
+                res = "(" + leftName + " + " + rightName + ")";
+                break;
             case Instruction::Sub:
-                return "(" + leftName + " - " + rightName + ")";
+                res = "(" + leftName + " - " + rightName + ")";
+                break;
             case Instruction::Mul:
-                return "(" + leftName + " * " + rightName + ")";
+                res = "(" + leftName + " * " + rightName + ")";
+                break;
             case Instruction::SDiv:
             case Instruction::UDiv:
-                return "(" + leftName + " / " + rightName + ")";
+                res = "(" + leftName + " / " + rightName + ")";
+                break;
             case Instruction::SRem:
             case Instruction::URem:
-                return "(" + leftName + " % " + rightName + ")";
+                res = "(" + leftName + " % " + rightName + ")";
+                break;
             default:
             {
-
+                res = tmp_name;
             }
         }
+        ValueNameCache[bo] = res;
+        return res;
     }
 
+    ValueNameCache[param] = tmp_name;
     return tmp_name;
 }
 
@@ -3214,10 +3263,8 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                 if (!I.getDebugLoc())
                     continue;
 
-//                if (I.getDebugLoc().getLine() != 145)
-//                        continue;
-//                I.dump();
 
+#if 0
                 if (option_debug)
                 {
                     if(!M->getName().startswith("/usr/")) {
@@ -3228,7 +3275,7 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                         M->print(out, nullptr);
                     }
                 }
-
+#endif
 
                 if(GetElementPtrInst* ge = dyn_cast<GetElementPtrInst>(&I)){
                     if(ge->user_empty()){

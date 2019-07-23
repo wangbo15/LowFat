@@ -3205,9 +3205,8 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
         if(F.getName().str().rfind("lowfat_", 0) == 0)
             continue;
 
-
-        //if(F.getName().str() != "put_pixel_rows") { continue;  }
-        //errs()<<"=========================== "<<F.getName()<<"\n";
+//        if(F.getName().str() != "readSeparateTilesIntoBuffer") { continue;  }
+//        errs()<<"=========================== "<<F.getName()<<"\n";
 
         for (auto &BB: F) {
 
@@ -3215,10 +3214,9 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                 if (!I.getDebugLoc())
                     continue;
 
-                if (I.getDebugLoc().getLine() != 145)
-                        continue;
-
-                I.dump();
+//                if (I.getDebugLoc().getLine() != 145)
+//                        continue;
+//                I.dump();
 
                 if (option_debug)
                 {
@@ -3254,8 +3252,6 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                 if (Name != "lowfat_oob_check"){
                     continue;
                 }
-
-                errs()<<">>>>>>>> lowfat_oob_check\n";
 
                 Value *pointer = call->getArgOperand(1);
 

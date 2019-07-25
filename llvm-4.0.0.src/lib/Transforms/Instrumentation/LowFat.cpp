@@ -2669,6 +2669,11 @@ static string get_va_nm_tp_inner(Function *F,
         Value* left = bo->getOperand(0);
         Value* right = bo->getOperand(1);
 
+        if(left == bo || right == bo) {
+            ValueNameCache[bo] = tmp_name;
+            return tmp_name;
+        }
+
         string leftName = get_va_nm_tp_inner(F, left, valueNameMap, structInfo, scanned);
         std::size_t idx = leftName.find("#");
         if(idx != std::string::npos) {
@@ -3293,7 +3298,6 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                 Function *called = call->getCalledFunction();
                 if (called == nullptr || !called->hasName())
                     continue;
-
 
                 const string &Name = called->getName().str();
                 if (Name != "lowfat_oob_check"){

@@ -86,6 +86,68 @@ extern size_t lowfat_get_num_errors(void)
     return lowfat_num_messages;
 }
 
+
+static int split (const char *str, char c, char ***arr)
+{
+    int count = 1;
+    int token_len = 1;
+    int i = 0;
+    char *p;
+    char *t;
+
+    p = (char *) str;
+    while (*p != '\0')
+    {
+        if (*p == c)
+            count++;
+        p++;
+    }
+
+    *arr = (char**) malloc(sizeof(char*) * count);
+    if (*arr == NULL)
+        exit(1);
+
+    p = (char *) str;
+    while (*p != '\0')
+    {
+        if (*p == c)
+        {
+            (*arr)[i] = (char*) malloc( sizeof(char) * token_len );
+            if ((*arr)[i] == NULL)
+                exit(1);
+
+            token_len = 0;
+            i++;
+        }
+        p++;
+        token_len++;
+    }
+    (*arr)[i] = (char*) malloc( sizeof(char) * token_len );
+    if ((*arr)[i] == NULL)
+        exit(1);
+
+    i = 0;
+    p = (char *) str;
+    t = ((*arr)[i]);
+    while (*p != '\0')
+    {
+        if (*p != c && *p != '\0')
+        {
+            *t = *p;
+            t++;
+        }
+        else
+        {
+            *t = '\0';
+            i++;
+            t = ((*arr)[i]);
+        }
+        p++;
+    }
+    return count;
+}
+
+
 /*
  * CSPRNG
  */
@@ -388,28 +450,47 @@ static LOWFAT_CONST void *lowfat_region(size_t idx)
     return (void *)(idx * LOWFAT_REGION_SIZE);
 }
 
-extern void lowfat_memcpy_overlap(void* desc, void* src, size_t len, char* location){
-    size_t diff;
+extern void lowfat_memcpy_overlap(void* desc, void* src, size_t len, char* msg){
 
-    const char* msg;
     if(src == desc) {
         return;
-    } else if(src > desc) {
+    }
+
+    char **arr = NULL;
+    int count = split(msg, '#', &arr);
+
+    if(count != 4){
+        fprintf(stderr, "ERROR MESSAGE FORMAT: %s\n", msg);
+        abort();
+    }
+    char* location = arr[0];
+    char* desc_name = arr[1];
+    char* src_name = arr[2];
+    char* len_name = arr[3];
+
+    size_t diff;
+    if(src > desc) {
         diff = (size_t)((const uint8_t *)src - (const uint8_t *)desc);
-        msg = "desc + len > src";
     } else {
         diff = (size_t)((const uint8_t *)desc - (const uint8_t *)src);
-        msg = "src + len > desc";
     }
 
     if(diff < len){
+        FILE* output = fopen("/tmp/cfc.out", "w");
+        if(src > desc) {
+            fprintf(output, "%s#(%s + %s <= %s)\n", location, desc_name, len_name, src_name);
+        } else {
+            fprintf(output, "%s#(%s + %s <= %s)\n", location, src_name, len_name, desc_name);
+        }
+        fclose(output);
+        fprintf(stderr, "Constraint has been written to /tmp/cfc.out\n");
+
         lowfat_error("mem-overlap error detected!\n"
                      "\tsrc   = %p \n"
                      "\tdesc  = %p\n"
                      "\tlen   = %zu\n"
-                     "\t%s\n"
                      "\t%s\n",
-                     src, desc, len, msg, location);
+                     src, desc, len, location);
     }
 }
 
@@ -693,67 +774,6 @@ extern void lowfat_oob_warning(unsigned info,
         "\t%s = %+zd\n",
         kind, ptr, lowfat_kind(ptr), baseptr, lowfat_size(baseptr),
         (overflow < 0? "underflow": "overflow "), overflow);
-}
-
-
-static int split (const char *str, char c, char ***arr)
-{
-    int count = 1;
-    int token_len = 1;
-    int i = 0;
-    char *p;
-    char *t;
-
-    p = (char *) str;
-    while (*p != '\0')
-    {
-        if (*p == c)
-            count++;
-        p++;
-    }
-
-    *arr = (char**) malloc(sizeof(char*) * count);
-    if (*arr == NULL)
-        exit(1);
-
-    p = (char *) str;
-    while (*p != '\0')
-    {
-        if (*p == c)
-        {
-            (*arr)[i] = (char*) malloc( sizeof(char) * token_len );
-            if ((*arr)[i] == NULL)
-                exit(1);
-
-            token_len = 0;
-            i++;
-        }
-        p++;
-        token_len++;
-    }
-    (*arr)[i] = (char*) malloc( sizeof(char) * token_len );
-    if ((*arr)[i] == NULL)
-        exit(1);
-
-    i = 0;
-    p = (char *) str;
-    t = ((*arr)[i]);
-    while (*p != '\0')
-    {
-        if (*p != c && *p != '\0')
-        {
-            *t = *p;
-            t++;
-        }
-        else
-        {
-            *t = '\0';
-            i++;
-            t = ((*arr)[i]);
-        }
-        p++;
-    }
-    return count;
 }
 
 static const char* get_lowfat_locmsg(const void* baseptr){

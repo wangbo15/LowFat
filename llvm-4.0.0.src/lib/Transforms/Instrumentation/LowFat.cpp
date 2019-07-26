@@ -178,6 +178,10 @@ static bool isInterestingGlobal(GlobalVariable *GV);
 static cl::opt<bool> option_symbolize("lowfat-symbolize",
     cl::desc("Symbolizing constraints"));
 
+static cl::opt<bool> option_memcpy_overlap("lowfat-memcpy-overlap",
+                                      cl::desc("Check for memcpy overlap"));
+
+
 static cl::opt<bool> option_debug("lowfat-debug",
     cl::desc("Dump before-and-after LowFat instrumented LLVM IR"));
 static cl::opt<bool> option_no_check_reads("lowfat-no-check-reads",
@@ -2537,7 +2541,6 @@ static string get_va_nm_tp_inner(Function *F,
         string base_name_type = get_va_nm_tp_inner(F, base, valueNameMap, structInfo, scanned);
         pair<string, string> basePair = parseBaseAndType(base_name_type);
 
-
         string base_name = basePair.first;
         string base_type = basePair.second;
 
@@ -2561,9 +2564,7 @@ static string get_va_nm_tp_inner(Function *F,
 
         if(ConstantInt* CI = getConstantIntVal(offset))
         {
-
             uint64_t rawData = *(CI->getValue().getRawData());
-
             if(PTy)
             {
 
@@ -2619,7 +2620,10 @@ static string get_va_nm_tp_inner(Function *F,
         else
         {
             // TODO
-            string res = get_va_nm_tp_inner(F, offset, valueNameMap, structInfo, scanned);
+            string offset_name_type = get_va_nm_tp_inner(F, offset, valueNameMap, structInfo, scanned);
+            pair<string, string> offsetPair = parseBaseAndType(offset_name_type);
+
+            string res = "(" + base_name + "+" + offsetPair.first + ")";
             ValueNameCache[GEP] = res;
             return res;
         }
@@ -2634,12 +2638,14 @@ static string get_va_nm_tp_inner(Function *F,
             scanned.insert(phi->getIncomingValue(0));
 
             //phi->getIncomingValue(0)->dump();
+            Constant* C = dyn_cast<Constant>(phi->getIncomingValue(0));
+            if (!C) {
+                string firstNm = get_va_nm_tp_inner(F, phi->getIncomingValue(0), valueNameMap, structInfo, scanned);
 
-            string firstNm = get_va_nm_tp_inner(F, phi->getIncomingValue(0), valueNameMap, structInfo, scanned);
-
-            if(!startsWith(firstNm, "tmp_")) {
-                ValueNameCache[phi] = firstNm;
-                return firstNm;
+                if(!startsWith(firstNm, "tmp_")) {
+                    ValueNameCache[phi] = firstNm;
+                    return firstNm;
+                }
             }
 
         }
@@ -2654,15 +2660,17 @@ static string get_va_nm_tp_inner(Function *F,
         {
             scanned.insert(phi->getIncomingValue(1));
 
-            string secondNm = get_va_nm_tp_inner(F, phi->getIncomingValue(1), valueNameMap, structInfo, scanned);
+            Constant* C = dyn_cast<Constant>(phi->getIncomingValue(1));
+            if (!C) {
+                string secondNm = get_va_nm_tp_inner(F, phi->getIncomingValue(1), valueNameMap, structInfo, scanned);
 
-            if (!startsWith(secondNm, "tmp_")) {
-                ValueNameCache[phi] = secondNm;
-                return secondNm;
+                if (!startsWith(secondNm, "tmp_")) {
+                    ValueNameCache[phi] = secondNm;
+                    return secondNm;
+                }
             }
         }
-        ValueNameCache[phi] = tmp_name;
-        return tmp_name;
+
     }
     if(BinaryOperator* bo = dyn_cast<BinaryOperator>(param))
     {
@@ -3188,11 +3196,11 @@ static void symbolize(Module *M){
 
 }// end static void symbolize(Module *M)
 
-static void insert_verbose_checker(Function &F,
-                                    CallInst* call,
-                                    string offset_name,
-                                    string base_type,
-                                    vector<Instruction *> &dels)
+static void insert_lowfat_oob_check_verbose_ir(Function &F,
+                                               CallInst *call,
+                                               string offset_name,
+                                               string base_type,
+                                               vector<Instruction *> &dels)
 {
     const DebugLoc &location = call->getDebugLoc();
     if(!location)
@@ -3289,6 +3297,7 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                     }
                 }
 
+                // TODO, is it safe to lift to outer?
                 std::map<Value *, string> valueNameMap = collect_variable_metadata(F);
 
                 CallInst *call = dyn_cast<CallInst>(&I);
@@ -3426,7 +3435,7 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                     continue;
                 }
 
-                insert_verbose_checker(F, call, offset_name, base_type, dels);
+                insert_lowfat_oob_check_verbose_ir(F, call, offset_name, base_type, dels);
 
             }
         }
@@ -3439,53 +3448,87 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
 }//replace_oob_checker(Module *M)
 
 
-static void memory_overlap_check(Module *M) {
+static void memory_overlap_check(Module *M, map<string, vector<pair<string, string>>> &structInfo) {
     for(auto &F: *M){
         if (F.isDeclaration())
             continue;
 
+        //if(F.getName() != "fillpattern") continue;
+
         for (auto &BB: F){
             for (auto &I: BB) {
-                if(MemCpyInst* memcpyInst = dyn_cast<MemCpyInst>(&I)){
-                    IRBuilder<> builder(memcpyInst);
-                    Value* overFunc = M->getOrInsertFunction("lowfat_memcpy_overlap",
-                                               builder.getVoidTy(),
-                                               builder.getInt8PtrTy(),
-                                               builder.getInt8PtrTy(),
-                                               builder.getInt64Ty(),
-                                               builder.getInt8PtrTy(), nullptr);
 
-                    const DebugLoc &location = I.getDebugLoc();
-                    if(!location){
-                        continue;
-                    }
+                MemCpyInst* memcpyInst = dyn_cast<MemCpyInst>(&I);
+                if(!memcpyInst)
+                    continue;
 
-                    int line = location.getLine();
-                    string loc = M->getName().str() + ":" + to_string(line);
+                const DebugLoc &location = I.getDebugLoc();
+                if(!location)
+                    continue;
 
-                    Constant *msgConst = ConstantDataArray::getString(M->getContext(), loc, true);
+                IRBuilder<> builder(memcpyInst);
+                Value* overFunc = M->getOrInsertFunction("lowfat_memcpy_overlap",
+                                           builder.getVoidTy(),
+                                           builder.getInt8PtrTy(),
+                                           builder.getInt8PtrTy(),
+                                           builder.getInt64Ty(),
+                                           builder.getInt8PtrTy(), nullptr);
 
-                    // plus one for \0
-                    size_t len = loc.length() + 1;
+                Value* desc = memcpyInst->getOperand(0);
+                Value* src = memcpyInst->getOperand(1);
+                Value* length = memcpyInst->getOperand(2);
 
-                    Type *arr_type = ArrayType::get(IntegerType::get(M->getContext(), 8), len);
-                    GlobalVariable *gvar_name = new GlobalVariable(*M,
-                                                                   arr_type,
-                                                                   true,
-                                                                   GlobalValue::PrivateLinkage,
-                                                                   msgConst,
-                                                                   ".str");
-                    gvar_name->setAlignment(1);
-                    ConstantInt *zero = ConstantInt::get(M->getContext(), APInt(32, StringRef("0"), 10));
+                std::map<Value *, string> valueNameMap = collect_variable_metadata(F);
 
-                    std::vector<Constant *> indices;
-                    indices.push_back(zero);
-                    indices.push_back(zero);
+                // dest
+                string desc_nt = get_va_nm_tp(&F, desc, valueNameMap, structInfo);
+                pair<string, string> descPair = parseBaseAndType(desc_nt);
+                string desc_name = descPair.first;
 
-                    Constant *get_ele_ptr = ConstantExpr::getGetElementPtr(arr_type, gvar_name, indices);
+                // src
+                string src_nt = get_va_nm_tp(&F, src, valueNameMap, structInfo);
+                pair<string, string> srcPair = parseBaseAndType(src_nt);
+                string src_name = srcPair.first;
 
-                    builder.CreateCall(overFunc, {memcpyInst->getOperand(0), memcpyInst->getOperand(1), memcpyInst->getOperand(2), get_ele_ptr});
+                // length
+                string length_nt = get_va_nm_tp(&F, length, valueNameMap, structInfo);
+                pair<string, string> lengthPair = parseBaseAndType(length_nt);
+                string length_name = lengthPair.first;
+
+                int line = location.getLine();
+                string loc = M->getName().str() + ":" + F.getName().str() + ":" + to_string(line);
+
+                if (startsWith(desc_name, "tmp_") || startsWith(src_name, "tmp_") || startsWith(length_name, "tmp_")) {
+                    errs()<<">>>> TROUBLE IN GETTING MEMSET NAME AT: "<<loc <<"\n";
                 }
+
+                string msg = loc + "#" + desc_name + "#" + src_name + "#" + length_name;
+
+                //errs()<<">>>>>>>>>>>>>>>>> MSG: "<<msg<<"\n";
+
+                Constant *msgConst = ConstantDataArray::getString(M->getContext(), msg, true);
+
+                // plus one for \0
+                size_t len = msg.length() + 1;
+
+                Type *arr_type = ArrayType::get(IntegerType::get(M->getContext(), 8), len);
+                GlobalVariable *gvar_name = new GlobalVariable(*M,
+                                                               arr_type,
+                                                               true,
+                                                               GlobalValue::PrivateLinkage,
+                                                               msgConst,
+                                                               ".str");
+                gvar_name->setAlignment(1);
+                ConstantInt *zero = ConstantInt::get(M->getContext(), APInt(32, StringRef("0"), 10));
+
+                std::vector<Constant *> indices;
+                indices.push_back(zero);
+                indices.push_back(zero);
+
+                Constant *get_ele_ptr = ConstantExpr::getGetElementPtr(arr_type, gvar_name, indices);
+
+                builder.CreateCall(overFunc, {desc, src, length, get_ele_ptr});
+
             }
         }
     }
@@ -3778,7 +3821,9 @@ struct LowFat : public ModulePass
 
             replace_oob_checker(&M, structInfo);
 
-            //memory_overlap_check(&M);
+            if (option_memcpy_overlap) {
+                memory_overlap_check(&M, structInfo);
+            }
 
             // integer overflow handler
             insert_iof_handler(&M, structInfo);

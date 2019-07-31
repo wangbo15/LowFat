@@ -2554,7 +2554,7 @@ static string get_va_nm_tp_inner(Function *F,
         }
 
         if(!offset) {
-            errs()<<"NULL PTR OFFSET OF GEP\n";
+            //errs()<<"NULL PTR OFFSET OF GEP\n";
             ValueNameCache[GEP] = tmp_name;
             return tmp_name;
         }
@@ -2595,7 +2595,7 @@ static string get_va_nm_tp_inner(Function *F,
                         return ptr_name_type;
                     } else
                     {
-                        errs()<<">>>>>>>>> unknown struct information: "<<base_type<<" IDX: "<<rawData<<"\n";
+                        //errs()<<">>>>>>>>> unknown struct information: "<<base_type<<" IDX: "<<rawData<<"\n";
 
                         ValueNameCache[GEP] = tmp_name;
                         return tmp_name;
@@ -3153,10 +3153,12 @@ static void symbolize(Module *M){
 
                         if(!globalized)
                         {
-                            errs() << ">>>> Un-globalized " << Name << "()\n";
+                            //errs() << ">>>> Un-globalized " << Name << "() ";
+
+
                             for (auto *CU : M->debug_compile_units()) {
                                 if(CU->isOptimized()) {
-                                    errs() << ">>>> WARNING: The module is optimized\n";
+                                    //errs() << ">>>> WARNING: The module is optimized\n";
                                     break;
                                 }
                             }
@@ -3205,7 +3207,7 @@ static void insert_lowfat_oob_check_verbose_ir(Function &F,
     const DebugLoc &location = call->getDebugLoc();
     if(!location)
     {
-        errs()<<"NO DEBUG INFO !!!!\n";
+        //errs()<<"NO DEBUG INFO !!!!\n";
         return;
     }
 
@@ -3330,12 +3332,13 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                 string base_type = basePair.second;
                 if(base_type == "") // Unable to replace oob_checker
                 {
+#if 0
                     errs()<<">>>> ILLEGAL BASE NAME: "<<base_name<<"\n";
                     errs()<<">>>> CURRENT CALL INST:\n";
                     call->dump();
                     if(call->getDebugLoc())
                         errs()<<">>>> "<<M->getName()<<":"<<call->getDebugLoc().getLine()<<"\n";
-
+#endif
                     continue;
                 }
 
@@ -3360,8 +3363,8 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
 
                     if(!offset)
                     {
-                        errs()<<"NULL PTR OFFSET\n";
-                        gptr->dump();
+                        //errs()<<"NULL PTR OFFSET\n";
+                        //gptr->dump();
                         continue;
                     }
 
@@ -3395,7 +3398,7 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                                 offset_name_type = base_name + connection + memberName + "#" + memberType;
                             } else
                             {
-                                errs()<<">>>>>>>>> unknown struct information: "<<base_type<<" IDX: "<<rawData<<"\n";
+                                //errs()<<">>>>>>>>> unknown struct information: "<<base_type<<" IDX: "<<rawData<<"\n";
                                 continue;
                             }
 
@@ -3424,14 +3427,14 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                     #endif
 
                 } else {
-                    errs()<<">>>> unrecognized ptr type in lowfat_oob_check()\n";
-                    pointer->dump();
+                    //errs()<<">>>> unrecognized ptr type in lowfat_oob_check()\n";
+                    //pointer->dump();
                     continue;
                 }
 
                 if(offset_name == "")
                 {
-                    errs()<<">>>> ERROR OFFSET_NAME\n";
+                    //errs()<<">>>> ERROR OFFSET_NAME\n";
                     continue;
                 }
 
@@ -3499,7 +3502,7 @@ static void memory_overlap_check(Module *M, map<string, vector<pair<string, stri
                 string loc = M->getName().str() + ":" + F.getName().str() + ":" + to_string(line);
 
                 if (startsWith(desc_name, "tmp_") || startsWith(src_name, "tmp_") || startsWith(length_name, "tmp_")) {
-                    errs()<<">>>> TROUBLE IN GETTING MEMSET NAME AT: "<<loc <<"\n";
+                    //errs()<<">>>> TROUBLE IN GETTING MEMSET NAME AT: "<<loc <<"\n";
                 }
 
                 string msg = loc + "#" + desc_name + "#" + src_name + "#" + length_name;

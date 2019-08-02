@@ -126,7 +126,7 @@ extern void *lowfat_malloc(size_t size)
 
 #endif
 
-#if 0
+#if 1
     disable = true;
     fprintf(stderr, "lowfat_malloc BASE: %p, RES: %p, HEAP_IDX: %zu, APPLY: %zu, SIZE: %zu\n",
             lowfat_base(result), result, heapIdx, size, LOWFAT_SIZES[heapIdx]);
@@ -181,7 +181,7 @@ extern void *lowfat_malloc_symbolize(size_t size, MALLOC_LIST_HEAD* global_head)
     void* result = lowfat_malloc(size);
     lowfat_insert_map(size, result, global_head);
 
-    //fprintf(stderr, "lowfat_malloc_symbolize %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s\n", size, result, global_head, global_head->name);
+    fprintf(stderr, "lowfat_malloc_symbolize %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s\n", size, result, global_head, global_head->name);
 
     return result;
 }
@@ -377,7 +377,7 @@ extern void *lowfat_realloc_symbolize(void *ptr, size_t size, MALLOC_LIST_HEAD* 
     void* result = lowfat_realloc(ptr, size);
     lowfat_insert_map(size, result, global_head);
 
-    //fprintf(stderr, "lowfat_realloc_symbolize %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s\n", size, result, global_head, global_head->name);
+    fprintf(stderr, "lowfat_realloc_symbolize %zu, PTR: %p => GLOBAL_HEAD: %p, NAME: %s\n", size, result, global_head, global_head->name);
 
     return result;
 }
@@ -391,8 +391,6 @@ extern void *lowfat_realloc(void *ptr, size_t size)
     if (ptr == NULL || size == 0)
         return lowfat_malloc(size);
     size_t oriSize = (size_t) ((uint8_t *) ptr - (uint8_t *)lowfat_base(ptr));
-
-    //fprintf(stderr, "lowfat_realloc, PTR: %p, SIZE: %zu, ORI_SIZE: %zu\n", ptr, size, oriSize);
 
     size_t idx = lowfat_index(ptr);
 
@@ -444,6 +442,8 @@ extern void *lowfat_realloc(void *ptr, size_t size)
 #endif      /* LOWFAT_NO_PROTECT */
     memcpy(newptr, ptr, cpy_size);
     lowfat_free(ptr);
+
+    fprintf(stderr, "lowfat_realloc, PTR: %p, SIZE: %zu, ORI_SIZE: %zu, NEW_PTR: %p, BASE: %p\n", ptr, size, oriSize, newptr, lowfat_base(newptr));
 
     return newptr;
 }

@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 
 #define LOWFAT_PAGE_SIZE        4096
 #define LOWFAT_MAX_ADDRESS      0x1000000000000ull
@@ -669,60 +670,59 @@ extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fna
         char constraint[128];
 
         if(isSignedIntegerTy(typeDesc)){
-            const char* max;
-            const char* min;
+            char max[32];
+            char min[32];
             if(strcmp(type, "int") == 0){
-                max = "INT_MAX";
-                min = "INT_MIN";
+                sprintf(max, "%d", INT_MAX);
+                sprintf(min, "%d", INT_MIN);
             } else if(strcmp(type, "char") == 0) {
-                max = "CHAR_MAX";
-                min = "CHAR_MAX";
+                sprintf(max, "%d", CHAR_MAX);
+                sprintf(min, "%d", CHAR_MIN);
             } else if (strcmp(type, "long") == 0) {
-                max = "LONG_MAX";
-                min = "LONG_MIN";
+                sprintf(max, "%ld", LONG_MAX);
+                sprintf(min, "%ld", LONG_MIN);
             } else {
-                max = "SHRT_MAX";
-                min = "SHRT_MIN";
+                sprintf(max, "%hd", (short) SHRT_MAX);
+                sprintf(min, "%hd", (short) SHRT_MIN);
             }
 
             if(opcode == '+') {
-                sprintf(constraint, "(%s > 0 && %s > 0 && %s < %s - %s) || "
-                                    "(%s < 0 && %s < 0 && %s > %s - %s)",
-                                    left, right, left, max, right,
-                                    left, right, left, min, right);
+                sprintf(constraint, "(((%s > 0) & (%s > 0) & (%s < %s - %s)) | "
+                                    "((%s < 0) & (%s < 0) & (%s > %s - %s)))",
+                        left, right, left, max, right,
+                        left, right, left, min, right);
             } else if(opcode == '-') {
-                sprintf(constraint, "(%s > 0 && %s < 0 && %s < %s - %s) || "
-                                    "(%s < 0 && %s > 0 && %s > %s - %s)",
-                                    left, right, left, max, right,
-                                    left, right, left, min, right);
+                sprintf(constraint, "(((%s > 0) & (%s < 0) & (%s < %s - %s)) | "
+                                    "((%s < 0) & (%s > 0) & (%s > %s - %s)))",
+                        left, right, left, max, right,
+                        left, right, left, min, right);
             } else if(opcode == '*') {
-                sprintf(constraint, "%s != 0 && %s < %s / %s", right, left, max, right);
+                sprintf(constraint, "((%s != 0) & (%s < %s / %s))", right, left, max, right);
             }
         } else {
-            const char* max;
-            //const char* min = "0";
+            char max[32];
             if(strcmp(type, "unsigned int") == 0){
-                max = "UINT_MAX";
+                sprintf(max, "%u", UINT_MAX);
             } else if(strcmp(type, "unsigned char") == 0) {
-                max = "UCHAR_MAX";
+                sprintf(max, "%u", UCHAR_MAX);
             } else if (strcmp(type, "unsigned long") == 0) {
-                max = "ULONG_MAX";
+                sprintf(max, "%lu", ULONG_MAX);
             } else {
-                max = "USHRT_MAX";
+                sprintf(max, "%hu", (unsigned short) USHRT_MAX);
             }
 
             if(opcode == '+') {
-                sprintf(constraint, "%s < %s - %s", left, max, right);
+                sprintf(constraint, "(%s < %s - %s)", left, max, right);
             } else if(opcode == '-') {
-                sprintf(constraint, "%s >= %s", left, right);
+                sprintf(constraint, "(%s >= %s)", left, right);
             } else if(opcode == '*') {
-                sprintf(constraint, "%s != 0 && %s < %s / %s", right, left, max, right);
+                sprintf(constraint, "((%s != 0) & (%s < %s/%s))", right, left, max, right);
             }
         }
 
         fprintf(output, "%s:%s:%u#(%s)\n", loc.Filename, fname, loc.Line, constraint);
         fclose(output);
-        fprintf(stderr, "Constraint has been written to /tmp/cfc.out\n");
+        fprintf(stderr, "Constraint %s has been written to /tmp/cfc.out\n", constraint);
 
         lowfat_error(
                 "integer-over-flow error detected!\n"

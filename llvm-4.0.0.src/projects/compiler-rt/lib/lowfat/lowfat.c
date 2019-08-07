@@ -652,7 +652,7 @@ extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fna
         FILE* output = fopen("/tmp/cfc.out", "w");
         fprintf(output, "%s:%s:%u#(%s != 0)\n", loc.Filename, fname, loc.Line, right);
         fclose(output);
-        fprintf(stderr, "Constraint has been written to /tmp/cfc.out\n");
+        fprintf(stderr, "Constraint (%s != 0) has been written to /tmp/cfc.out\n", right);
 
         lowfat_error(
                 "divide-by-zero error detected!\n"
@@ -798,6 +798,7 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
     if(! lowfat_is_ptr(baseptr))
         return;
 
+    //fprintf(stderr, ">>>> lowfat_oob_check_verbose MSG: %s\n", msg);
 
     char **arr = NULL;
     int count = split(msg, '#', &arr);
@@ -808,7 +809,7 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
     }
 
     char* ptr_name = arr[0];
-    //char* ptr_type = arr[1];
+    char* base_msg = arr[1];
     char* location = arr[2];
 
     size_t diff;
@@ -846,14 +847,20 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
                 name[i] = '\0';
 
                 FILE* output = fopen("/tmp/cfc.out", "w");
-                if(overflow < 0)
-                {
-                    fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s >= 0), LOCATION: %s\n", ptr_name, location);
-                    fprintf(output, "%s#(%s >= 0)\n", location, ptr_name);
-                } else
-                {
-                    fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s\n", ptr_name, name, location);
-                    fprintf(output, "%s#(%s < %s)\n", location, ptr_name, name);
+                if (info == LOWFAT_OOB_ERROR_MEMCPY) {
+                    // for memset
+                    fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> ((%s + 1) < %s), LOCATION: %s\n", ptr_name, name, location);
+                    fprintf(output, "%s#((%s + 1) < %s)\n", location, ptr_name, name);
+                } else {
+                    if(overflow < 0)
+                    {
+                        fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s >= 0), LOCATION: %s\n", ptr_name, location);
+                        fprintf(output, "%s#(%s >= 0)\n", location, ptr_name);
+                    } else
+                    {
+                        fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s\n", ptr_name, name, location);
+                        fprintf(output, "%s#(%s < %s)\n", location, ptr_name, name);
+                    }
                 }
                 fprintf(stderr, "Constraint has been written to /tmp/cfc.out\n");
                 fclose(output);

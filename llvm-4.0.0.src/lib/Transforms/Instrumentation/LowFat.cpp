@@ -652,25 +652,36 @@ static Bounds getPtrBounds(const TargetLibraryInfo *TLI, const DataLayout *DL,
     return bounds;
 }
 
+
 /*
  * Insert an explicit lowfat_base(Ptr) operation after Ptr's origin.
  */
 static Value *calcBasePtr(Function *F, Value *Ptr)
 {
 
-#if(defined LOWFAT_REVERSE_MEM_LAYOUT && defined LOWFAT_MEMCPY_CHECK)
-//#ifdef LOWFAT_REVERSE_MEM_LAYOUT
-    auto i = nextInsertPoint(F, Ptr);
-    IRBuilder<> builder(i.first, i.second);
-    Ptr = builder.CreateBitCast(Ptr, builder.getInt8PtrTy());
-    return Ptr;
+//#if LOWFAT_MEMCPY_CHECK
+#ifdef LOWFAT_REVERSE_MEM_LAYOUT
+    if (!option_no_check_memcpy) {
+        auto i = nextInsertPoint(F, Ptr);
+        IRBuilder<> builder(i.first, i.second);
+        Ptr = builder.CreateBitCast(Ptr, builder.getInt8PtrTy());
+        return Ptr;
+    } else {
+        auto i = nextInsertPoint(F, Ptr);
+        IRBuilder<> builder(i.first, i.second);
+        Module *M = F->getParent();
+        Value *G = M->getOrInsertFunction("lowfat_base",
+                                          builder.getInt8PtrTy(), builder.getInt8PtrTy(), nullptr);
+        Ptr = builder.CreateBitCast(Ptr, builder.getInt8PtrTy());
+        Value *BasePtr = builder.CreateCall(G, {Ptr});
+        return BasePtr;
+    }
 #else
-
     auto i = nextInsertPoint(F, Ptr);
     IRBuilder<> builder(i.first, i.second);
     Module *M = F->getParent();
     Value *G = M->getOrInsertFunction("lowfat_base",
-        builder.getInt8PtrTy(), builder.getInt8PtrTy(), nullptr);
+                                      builder.getInt8PtrTy(), builder.getInt8PtrTy(), nullptr);
     Ptr = builder.CreateBitCast(Ptr, builder.getInt8PtrTy());
     Value *BasePtr = builder.CreateCall(G, {Ptr});
     return BasePtr;
@@ -960,13 +971,16 @@ static void getInterestingInsts(const TargetLibraryInfo *TLI,
 
         Value* lastIndex = MI->getOperand(2);
 
-#if(defined LOWFAT_REVERSE_MEM_LAYOUT && defined LOWFAT_MEMCPY_CHECK)
-        if(ConstantInt* CI = dyn_cast<ConstantInt>(lastIndex)){
-            APInt AI = CI->getValue();
-            AI--;
-            lastIndex = builder.getInt(AI);
-        }else{
-            lastIndex = builder.CreateSub(lastIndex, ConstantInt::get(lastIndex->getType(), 1, false));
+//#if LOWFAT_MEMCPY_CHECK)
+#ifdef LOWFAT_REVERSE_MEM_LAYOUT
+        if(!option_no_check_memcpy) {
+            if(ConstantInt* CI = dyn_cast<ConstantInt>(lastIndex)){
+                APInt AI = CI->getValue();
+                AI--;
+                lastIndex = builder.getInt(AI);
+            }else{
+                lastIndex = builder.CreateSub(lastIndex, ConstantInt::get(lastIndex->getType(), 1, false));
+            }
         }
 #endif
 
@@ -3201,7 +3215,7 @@ static void symbolize(Module *M){
 static void insert_lowfat_oob_check_verbose_ir(Function &F,
                                                CallInst *call,
                                                string offset_name,
-                                               string base_type,
+                                               string base_msg,
                                                vector<Instruction *> &dels)
 {
     const DebugLoc &location = call->getDebugLoc();
@@ -3215,7 +3229,7 @@ static void insert_lowfat_oob_check_verbose_ir(Function &F,
     int line = location.getLine();
     string loc = M->getName().str() + ":" + F.getName().str() + ":" + to_string(line);
 
-    string msg = offset_name + "#" + base_type + "#" + loc;
+    string msg = offset_name + "#" + base_msg + "#" + loc;
 
     //errs() << "=============================== OOB CHECKING " << msg << "\n";
 
@@ -3438,7 +3452,20 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                     continue;
                 }
 
-                insert_lowfat_oob_check_verbose_ir(F, call, offset_name, base_type, dels);
+                ConstantInt* CI = dyn_cast<ConstantInt>(call->getArgOperand(0));
+                if(!CI) {
+                    continue;
+                }
+                uint64_t info = *(CI->getValue().getRawData());
+
+                if (info == LOWFAT_OOB_ERROR_MEMCPY) {
+                    if(base_name == "")
+                        continue;
+
+                    insert_lowfat_oob_check_verbose_ir(F, call, offset_name, base_name, dels);
+                } else {
+                    insert_lowfat_oob_check_verbose_ir(F, call, offset_name, base_type, dels);
+                }
 
             }
         }

@@ -473,12 +473,8 @@ extern void *lowfat_calloc(size_t nmemb, size_t size)
  */
 extern int lowfat_posix_memalign(void **memptr, size_t align, size_t size)
 {
-#ifdef LOWFAT_REVERSE_MEM_LAYOUT
-    fprintf(stderr, "lowfat_posix_memalign NOT IMPLEMENTED\n");
-    abort();
-#endif
+// No need to be implemented for LOWFAT_REVERSE_MEM_LAYOUT
 
-    //TODO for reverse
     if (align < sizeof(void *) || (align & (align - 1)) != 0)
         lowfat_error("invalid posix_memalign parameter: %s",
             strerror(EINVAL));

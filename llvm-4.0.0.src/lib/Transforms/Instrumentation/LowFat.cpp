@@ -2838,8 +2838,13 @@ static std::map<Value*, string> collect_variable_metadata(Function &F)
                 DIType* DIT = DV->getType().resolve();
                 string name = DV->getName().str();
                 string type = DITypeToString(DIT, typedefInfo);
-                //errs()<<"+++++++++++++++++++++++++++++++ "<<name + "#" + type<<"\n";
-                valueNameMap[val] = name + "#" + type;
+
+//                errs() << "+++++++++++++++++++++++++++++++ " << name + "#" + type << "\n";
+//                I.dump();
+
+                if(valueNameMap.find(val) == valueNameMap.end()) {
+                    valueNameMap[val] = name + "#" + type;
+                }
 
             } else if (DbgDeclareInst* dbgDecl = dyn_cast<DbgDeclareInst>(&I))
             {
@@ -2889,9 +2894,13 @@ static std::map<Value*, string> collect_variable_metadata(Function &F)
                 DIType* DIT = LV->getType().resolve();
                 string name = LV->getName().str();
                 string type = DITypeToString(DIT, typedefInfo);
-                //errs()<<"+++++++++++++++++++++++++++++++ "<<name + "#" + type<<"\n";
-                valueNameMap[val] = name + "#" + type;
-            }
+
+//              errs() << "+++++++++++++++++++++++++++++++ " << name + "#" + type << "\n";
+//              I.dump();
+
+                if(valueNameMap.find(val) == valueNameMap.end()) {
+                    valueNameMap[val] = name + "#" + type;
+                }            }
         }// end for(I)
     }// end for(BB)
 
@@ -3215,7 +3224,8 @@ static void symbolize(Module *M){
 static void insert_lowfat_oob_check_verbose_ir(Function &F,
                                                CallInst *call,
                                                string offset_name,
-                                               string base_msg,
+                                               string base_name,
+                                               string base_type,
                                                vector<Instruction *> &dels)
 {
     const DebugLoc &location = call->getDebugLoc();
@@ -3229,7 +3239,7 @@ static void insert_lowfat_oob_check_verbose_ir(Function &F,
     int line = location.getLine();
     string loc = M->getName().str() + ":" + F.getName().str() + ":" + to_string(line);
 
-    string msg = offset_name + "#" + base_msg + "#" + loc;
+    string msg = offset_name + "#" + base_name + "#" + base_type + "#" + loc;
 
     //errs() << "=============================== OOB CHECKING " << msg << "\n";
 
@@ -3283,7 +3293,7 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
         if(F.getName().str().rfind("lowfat_", 0) == 0)
             continue;
 
-//        if(F.getName().str() != "readSeparateTilesIntoBuffer") { continue;  }
+//        if(F.getName().str() != "decode_dds1") { continue;  }
 //        errs()<<"=========================== "<<F.getName()<<"\n";
 
         for (auto &BB: F) {
@@ -3292,6 +3302,7 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                 if (!I.getDebugLoc())
                     continue;
 
+//                if(I.getDebugLoc().getLine() != 185) continue;
 
 #if 0
                 if (option_debug)
@@ -3458,14 +3469,11 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                 }
                 uint64_t info = *(CI->getValue().getRawData());
 
-                if (info == LOWFAT_OOB_ERROR_MEMCPY) {
-                    if(base_name == "")
-                        continue;
+                if (base_name == "")
+                    continue;
 
-                    insert_lowfat_oob_check_verbose_ir(F, call, offset_name, base_name, dels);
-                } else {
-                    insert_lowfat_oob_check_verbose_ir(F, call, offset_name, base_type, dels);
-                }
+                base_type;
+                insert_lowfat_oob_check_verbose_ir(F, call, offset_name, base_name, base_type, dels);
 
             }
         }

@@ -803,14 +803,16 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
     char **arr = NULL;
     int count = split(msg, '#', &arr);
 
-    if(count != 3){
+    // offset_name, base_name, base_type, loc
+    if(count != 4){
         fprintf(stderr, "ERROR MESSAGE FORMAT: %s\n", msg);
         abort();
     }
 
     char* ptr_name = arr[0];
-    char* base_msg = arr[1];
-    char* location = arr[2];
+    char* base_name = arr[1];
+    char* base_type = arr[2];
+    char* location = arr[3];
 
     size_t diff;
 
@@ -850,16 +852,16 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
                 if (info == LOWFAT_OOB_ERROR_MEMCPY) {
                     // for memset
                     fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> ((%s + 1) < %s), LOCATION: %s\n", ptr_name, name, location);
-                    fprintf(output, "%s#((%s + 1) < %s)\n", location, ptr_name, name);
+                    fprintf(output, "%s#((%s + 1) < %s)\n%s#%s\n", location, ptr_name, name, base_name, base_type);
                 } else {
                     if(overflow < 0)
                     {
                         fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s >= 0), LOCATION: %s\n", ptr_name, location);
-                        fprintf(output, "%s#(%s >= 0)\n", location, ptr_name);
+                        fprintf(output, "%s#(%s >= 0)\n%s#%s\n", location, ptr_name, base_name, base_type);
                     } else
                     {
                         fprintf(stderr, "LOWFAT OOB CONSTRAINT >>>>>>> (%s < %s), LOCATION: %s\n", ptr_name, name, location);
-                        fprintf(output, "%s#(%s < %s)\n", location, ptr_name, name);
+                        fprintf(output, "%s#(%s < %s)\n%s#%s\n", location, ptr_name, name, base_name, base_type);
                     }
                 }
                 fprintf(stderr, "Constraint has been written to /tmp/cfc.out\n");

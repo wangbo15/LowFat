@@ -687,17 +687,35 @@ extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fna
             }
 
             if(opcode == '+') {
-                sprintf(constraint, "(((%s > 0) & (%s > 0) & (%s < %s - %s)) | "
-                                    "((%s < 0) & (%s < 0) & (%s > %s - %s)))",
-                        left, right, left, max, right,
-                        left, right, left, min, right);
+//                sprintf(constraint, "("
+//                                       "((%s >= 0) & (%s >= 0) & (%s <= %s - %s)) | "
+//                                       "((%s < 0) & (%s < 0) & (%s >= %s - %s)) | "
+//                                       "((%s >= 0) & (%s <= 0)) | "
+//                                       "((%s <= 0) & (%s >= 0)) | "
+//                                    ")",
+//                        left, right, left, max, right,
+//                        left, right, left, min, right,
+//                        left, right,
+//                        left, right);
+
+                sprintf(constraint, "(%s + %s <= %s) & (%s + %s >= %s)", left, right, max, left, right, min);
             } else if(opcode == '-') {
-                sprintf(constraint, "(((%s > 0) & (%s < 0) & (%s < %s - %s)) | "
-                                    "((%s < 0) & (%s > 0) & (%s > %s - %s)))",
-                        left, right, left, max, right,
-                        left, right, left, min, right);
+//                sprintf(constraint, "("
+//                                       "((%s >= 0) & (%s =< 0) & (%s <= %s - %s)) | "
+//                                       "((%s < 0) & (%s > 0) & (%s >= %s - %s)) | "
+//                                       "((%s >= 0) & (%s >= 0)) | "
+//                                       "((%s <= 0) & (%s <= 0)) | "
+//                                    ")",
+//                        left, right, left, max, right,
+//                        left, right, left, min, right,
+//                        left, right,
+//                        left, right);
+
+                sprintf(constraint, "(%s - %s <= %s) & (%s - %s >= %s)", left, right, max, left, right, min);
+
             } else if(opcode == '*') {
-                sprintf(constraint, "((%s != 0) & (%s < %s / %s))", right, left, max, right);
+//              sprintf(constraint, "((%s != 0) & (%s < %s / %s))", right, left, max, right);
+                sprintf(constraint, "(%s * %s <= %s) & (%s * %s >= %s)", left, right, max, left, right, min);
             }
         } else {
             char max[32];
@@ -712,11 +730,12 @@ extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fna
             }
 
             if(opcode == '+') {
-                sprintf(constraint, "(%s < %s - %s)", left, max, right);
+                sprintf(constraint, "(%s <= %s - %s)", left, max, right);
             } else if(opcode == '-') {
                 sprintf(constraint, "(%s >= %s)", left, right);
             } else if(opcode == '*') {
-                sprintf(constraint, "((%s != 0) & (%s < %s/%s))", right, left, max, right);
+//                sprintf(constraint, "((%s != 0) & (%s < %s/%s))", right, left, max, right);
+                sprintf(constraint, "(%s * %s <= %s)", left, right, max);
             }
         }
 

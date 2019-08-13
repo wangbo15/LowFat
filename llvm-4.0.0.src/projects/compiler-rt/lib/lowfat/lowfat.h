@@ -141,6 +141,10 @@ static inline _LOWFAT_CONST _LOWFAT_INLINE size_t lowfat_buffer_size(
         ((const uint8_t *)(_ptr) - (const uint8_t *)lowfat_base(_ptr));
 }
 
+/*
+ * Report an over shift error.
+ */
+extern _LOWFAT_NORETURN void lowfat_shift_error(const void *Data, const char* fname, const char* right);
 
 /*
  * Report an arithmetic error, including integer-overflow and divide-by-zero.

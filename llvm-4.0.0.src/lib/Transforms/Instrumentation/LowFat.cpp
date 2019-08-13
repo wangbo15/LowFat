@@ -3463,16 +3463,9 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
                     continue;
                 }
 
-                ConstantInt* CI = dyn_cast<ConstantInt>(call->getArgOperand(0));
-                if(!CI) {
-                    continue;
-                }
-                uint64_t info = *(CI->getValue().getRawData());
-
                 if (base_name == "")
                     continue;
 
-                base_type;
                 insert_lowfat_oob_check_verbose_ir(F, call, offset_name, base_name, base_type, dels);
 
             }
@@ -3596,6 +3589,78 @@ static Constant* insertGlobalStrAndGenGEP(Module *M, string str){
     return GEP;
 }
 
+static void insert_sft_handler(Module *M, map<string, vector<pair<string, string>>> structInfo)
+{
+    for(auto &F: *M)
+    {
+        if (F.isDeclaration())
+            continue;
+
+        //if(F.getName().str() != "JPEGSetupEncode") continue;
+
+        std::map<Value *, string> valueNameMap = collect_variable_metadata(F);
+
+        string fnameStr = F.getName().str();
+        Constant *FNameGEP = nullptr;
+
+
+        for (auto &BB: F)
+        {
+            for (auto &I: BB)
+            {
+                if(CallInst *call = dyn_cast<CallInst>(&I))
+                {
+                    Function *called = call->getCalledFunction();
+                    if (called == nullptr || !called->hasName())
+                        continue;
+
+                    const string &Name = called->getName().str();
+                    if (Name != "__ubsan_handle_shift_out_of_bounds")
+                        continue;
+
+                    IRBuilder<> builder(&I);
+
+                    Function* handler = M->getFunction("lowfat_shift_error");
+                    if (!handler)
+                    {
+                        std::vector<Type*> typeVec;
+                        // void * Data
+                        typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+                        // char* fname
+                        typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+                        // char * right
+                        typeVec.push_back(PointerType::get(IntegerType::get(M->getContext(), 8), 0));
+
+                        FunctionType* funcType = FunctionType::get(builder.getVoidTy(), typeVec, true);
+                        handler = Function::Create(funcType, GlobalValue::ExternalLinkage, "lowfat_shift_error", M);
+                        handler->setCallingConv(CallingConv::C);
+                    }
+
+                    Value* data = call->getArgOperand(0);
+
+                    string rightName = get_va_nm_tp(&F, call->getArgOperand(2), valueNameMap, structInfo);
+                    auto pos = rightName.find("#");
+                    if(pos != string::npos)
+                    {
+                        rightName = rightName.substr(0, pos);
+                    }
+
+                    if(!FNameGEP)
+                    {
+                        FNameGEP = insertGlobalStrAndGenGEP(M, fnameStr);
+                    }
+
+                    Constant *rightGEP = insertGlobalStrAndGenGEP(M, rightName);
+                    builder.CreateCall(handler, {data, FNameGEP, rightGEP});
+                }
+
+
+            }
+        }
+    }
+
+}
+
 static void insert_iof_handler(Module *M, map<string, vector<pair<string, string>>> structInfo)
 {
     for(auto &F: *M)
@@ -3620,9 +3685,8 @@ static void insert_iof_handler(Module *M, map<string, vector<pair<string, string
                 {
                     Function *called = call->getCalledFunction();
                     if (called == nullptr || !called->hasName())
-                    {
                         continue;
-                    }
+
                     const string &Name = called->getName().str();
                     bool needInsert = false;
                     char op = 0;
@@ -3663,8 +3727,8 @@ static void insert_iof_handler(Module *M, map<string, vector<pair<string, string
                             // char opcode
                             typeVec.push_back(IntegerType::get(M->getContext(), 8));
 
-                            FunctionType* printfType = FunctionType::get(builder.getVoidTy(), typeVec, true);
-                            handler = Function::Create(printfType, GlobalValue::ExternalLinkage, "lowfat_arith_error", M);
+                            FunctionType* funcType = FunctionType::get(builder.getVoidTy(), typeVec, true);
+                            handler = Function::Create(funcType, GlobalValue::ExternalLinkage, "lowfat_arith_error", M);
                             handler->setCallingConv(CallingConv::C);
                         }
 
@@ -3865,9 +3929,8 @@ struct LowFat : public ModulePass
 
             // integer overflow handler
             insert_iof_handler(&M, structInfo);
+            insert_sft_handler(&M, structInfo);
         }
-
-
 
         if (option_debug)
         {

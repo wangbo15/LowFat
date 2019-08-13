@@ -45,4 +45,11 @@ typedef struct lowfat_overflow_data
     LOWFAT_TYPE_DESC* Type;
 } LOWFAT_OVERFLOW_DATA;
 
+typedef struct lowfat_overshift_data
+{
+    LOWFAT_SRC_LOC Loc;
+    LOWFAT_TYPE_DESC* LHSType;
+    LOWFAT_TYPE_DESC* RHSType;
+} LOWFAT_OVERSHIFT_DATA;
+
 #endif

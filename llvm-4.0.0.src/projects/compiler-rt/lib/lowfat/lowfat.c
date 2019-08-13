@@ -636,6 +636,31 @@ static void getTypeName(LOWFAT_TYPE_DESC* typeDesc, char *res){
     }
 }
 
+extern LOWFAT_NORETURN void lowfat_shift_error(const void *Data, const char* fname, const char* right){
+    LOWFAT_OVERSHIFT_DATA* overshiftData = (LOWFAT_OVERSHIFT_DATA*) Data;
+
+    LOWFAT_SRC_LOC loc = overshiftData->Loc;
+
+    LOWFAT_TYPE_DESC* typeDesc = overshiftData->LHSType;
+
+    size_t bitWidth = getIntegerBitWidth(typeDesc);
+
+    FILE* output = fopen("/tmp/cfc.out", "w");
+    fprintf(output, "%s:%s:%u#(%s <= %zu)\n", loc.Filename, fname, loc.Line, right, bitWidth);
+
+    fclose(output);
+    fprintf(stderr, "Constraint (%s <= %zu) has been written to /tmp/cfc.out\n", right, bitWidth);
+
+    lowfat_error(
+            "over-shift error detected!\n"
+            "\tfile = %s\n"
+            "\tfunc = %s\n"
+            "\tline = %d\n"
+            "\tcol  = %d\n"
+            "\texponent = %s\n",
+            loc.Filename, fname, loc.Line, loc.Column, right);
+}
+
 
 extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fname, const char* left, const char* right, const char opcode){
     LOWFAT_OVERFLOW_DATA* overflowData = (LOWFAT_OVERFLOW_DATA*) Data;

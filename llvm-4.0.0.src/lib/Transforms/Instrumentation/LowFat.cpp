@@ -3775,14 +3775,19 @@ static void insert_nullderef_handler(Module *M, map<string, vector<pair<string, 
         if (F.isDeclaration())
             continue;
 
-        if(F.getName().str() != "xmlDumpElementContent") continue;
+        //if(F.getName().str() != "xmlDumpElementContent") continue;
 
         std::map<Value *, string> valueNameMap = collect_variable_metadata(F);
         string fnameStr = F.getName().str();
 
         for (auto &BB: F) {
             for (auto &I: BB) {
-                auto * GEP = dyn_cast<GetElementPtrInst>(&I);
+                auto *L = dyn_cast<LoadInst>(&I);
+                if(!L)
+                    continue;
+
+                auto *P = L->getPointerOperand();
+                auto * GEP = dyn_cast<GetElementPtrInst>(P);
                 if (!GEP)
                     continue;
 
@@ -3792,31 +3797,33 @@ static void insert_nullderef_handler(Module *M, map<string, vector<pair<string, 
                 if(!I.getDebugLoc())
                     continue;
 
-                if(I.getDebugLoc().getLine() != 1181) continue;
+                //if(I.getDebugLoc().getLine() != 1181) continue;
 
-                Type* SrcTP = GEP->getSourceElementType();
-                if(!SrcTP->isStructTy())
-                    continue;
+                auto* base = GEP->getPointerOperand();
+                string base_name_type = get_va_nm_tp(&F, base, valueNameMap, structInfo);
 
-                string GEP_name_type = get_va_nm_tp(&F, GEP, valueNameMap, structInfo);
+                //errs()<<"GEP_name_type <<<<<<<<<<: "<<base_name_type<<"\n";
 
-                //errs()<<"GEP_name_type <<<<<<<<<<: "<<GEP_name_type<<"\n";
+                pair<string, string> BasePair = parseBaseAndType(base_name_type);
+                string base_name = BasePair.first;
+                string base_type = BasePair.second;
 
-                pair<string, string> GEPPair = parseBaseAndType(GEP_name_type);
-                string GEP_name = GEPPair.first;
-                string GEP_type = GEPPair.second;
+                if(base_type == "" || base_type == "UNKNOWN") {
+                    Type *SrcTP = GEP->getSourceElementType();
+                    base_type = typeToStr(SrcTP);
+                }
 
-                if(GEP_type == "")
-                    continue;
-
-                if(GEP_type.rfind("*") == string::npos)
+                if(base_type.rfind("*") == string::npos)
                     continue;
 
                 Module *M = F.getParent();
                 int line = I.getDebugLoc().getLine();
                 string loc = M->getName().str() + ":" + fnameStr + ":" + to_string(line);
 
-                string msg = GEP_name + "#" + loc;
+                string msg = base_name + "#" + loc;
+
+                //errs()<<"!!!!!!!!!!!!!!!  "<<msg<<"\n";
+
                 Constant *msgConst = ConstantDataArray::getString(M->getContext(), msg, true);
                 size_t len = msg.length() + 1;
                 Type *arr_type = ArrayType::get(IntegerType::get(M->getContext(), 8), len);
@@ -3836,8 +3843,7 @@ static void insert_nullderef_handler(Module *M, map<string, vector<pair<string, 
 
                 Constant *get_ele_ptr = ConstantExpr::getGetElementPtr(arr_type, gvar_name, indices);
 
-                IRBuilder<> builder(GEP);
-                builder.SetInsertPoint(I.getNextNode());
+                IRBuilder<> builder(L);
 
                 Constant *func = M->getOrInsertFunction("lowfat_null_deref_check",
                                                         builder.getVoidTy(),

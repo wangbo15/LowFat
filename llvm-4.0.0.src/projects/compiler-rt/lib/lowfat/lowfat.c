@@ -830,7 +830,7 @@ static const char* get_lowfat_locmsg(const void* baseptr){
 
 extern void lowfat_null_deref_check(const void *ptr, const char* msg)
 {
-    if(*((const uint8_t *) ptr) != 0)
+    if((const uint8_t *) ptr != 0)
         return;
 
     char **arr = NULL;
@@ -849,7 +849,7 @@ extern void lowfat_null_deref_check(const void *ptr, const char* msg)
     fprintf(stderr, "LOWFAT NULL PTR DEREF CONSTRAINT >>>>>>> (%s != 0), LOCATION: %s\n", ptr_name, location);
     fprintf(stderr, "Constraint has been written to /tmp/cfc.out\n");
 
-    fprintf(output, "%s#((%s) != 0)\n", location, ptr_name);
+    fprintf(output, "%s#(%s != 0)\n", location, ptr_name);
     fclose(output);
 
     lowfat_error(

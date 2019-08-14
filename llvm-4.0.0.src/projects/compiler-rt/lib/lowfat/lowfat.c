@@ -461,7 +461,7 @@ extern void lowfat_memcpy_overlap(void* desc, void* src, size_t len, char* msg){
     int count = split(msg, '#', &arr);
 
     if(count != 4){
-        fprintf(stderr, "ERROR MESSAGE FORMAT: %s\n", msg);
+        fprintf(stderr, "ERROR MESSAGE FORMAT @lowfat_memcpy_overlap: %s\n", msg);
         abort();
     }
     char* location = arr[0];
@@ -647,7 +647,6 @@ extern LOWFAT_NORETURN void lowfat_shift_error(const void *Data, const char* fna
 
     FILE* output = fopen("/tmp/cfc.out", "w");
     fprintf(output, "%s:%s:%u#(%s <= %zu)\n", loc.Filename, fname, loc.Line, right, bitWidth);
-
     fclose(output);
     fprintf(stderr, "Constraint (%s <= %zu) has been written to /tmp/cfc.out\n", right, bitWidth);
 
@@ -669,7 +668,7 @@ extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fna
 
     LOWFAT_TYPE_DESC* typeDesc = overflowData->Type;
 
-    char type[64];
+    char type[64] = {0};
     getTypeName(typeDesc, type);
 
     if(opcode == '/') {
@@ -695,8 +694,8 @@ extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fna
         char constraint[128];
 
         if(isSignedIntegerTy(typeDesc)){
-            char max[32];
-            char min[32];
+            char max[32] = {0};
+            char min[32] = {0};
             if(strcmp(type, "int") == 0){
                 sprintf(max, "%d", INT_MAX);
                 sprintf(min, "%d", INT_MIN);
@@ -743,7 +742,7 @@ extern LOWFAT_NORETURN void lowfat_arith_error(const void *Data, const char* fna
                 sprintf(constraint, "(%s * %s <= %s) & (%s * %s >= %s)", left, right, max, left, right, min);
             }
         } else {
-            char max[32];
+            char max[32] = {0};
             if(strcmp(type, "unsigned int") == 0){
                 sprintf(max, "%u", UINT_MAX);
             } else if(strcmp(type, "unsigned char") == 0) {
@@ -829,6 +828,38 @@ static const char* get_lowfat_locmsg(const void* baseptr){
     return loc_msg;
 }
 
+extern void lowfat_null_deref_check(const void *ptr, const char* msg)
+{
+    if(*((const uint8_t *) ptr) != 0)
+        return;
+
+    char **arr = NULL;
+    int count = split(msg, '#', &arr);
+
+    // ptr_name, loc
+    if(count != 2){
+        fprintf(stderr, "ERROR MESSAGE FORMAT @lowfat_null_deref_check: %s\n", msg);
+        abort();
+    }
+
+    char* ptr_name = arr[0];
+    char* location = arr[1];
+
+    FILE* output = fopen("/tmp/cfc.out", "w");
+    fprintf(stderr, "LOWFAT NULL PTR DEREF CONSTRAINT >>>>>>> (%s != 0), LOCATION: %s\n", ptr_name, location);
+    fprintf(stderr, "Constraint has been written to /tmp/cfc.out\n");
+
+    fprintf(output, "%s#((%s) != 0)\n", location, ptr_name);
+    fclose(output);
+
+    lowfat_error(
+            "null-pointer-dereference error detected!\n"
+            "\tlocation  = %s\n"
+            "\tptr       = %s\n",
+            location, ptr_name);
+}
+
+
 /**
  * @param info
  * @param ptr
@@ -849,7 +880,7 @@ extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size
 
     // offset_name, base_name, base_type, loc
     if(count != 4){
-        fprintf(stderr, "ERROR MESSAGE FORMAT: %s\n", msg);
+        fprintf(stderr, "ERROR MESSAGE FORMAT @lowfat_oob_check_verbose: %s\n", msg);
         abort();
     }
 

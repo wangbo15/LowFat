@@ -181,6 +181,8 @@ static cl::opt<bool> option_symbolize("lowfat-symbolize",
 static cl::opt<bool> option_memcpy_overlap("lowfat-memcpy-overlap",
                                       cl::desc("Check for memcpy overlap"));
 
+static cl::opt<bool> option_null_deref("lowfat-null-deref",
+                                      cl::desc("Check for null dereference"));
 
 static cl::opt<bool> option_debug("lowfat-debug",
     cl::desc("Dump before-and-after LowFat instrumented LLVM IR"));
@@ -3768,6 +3770,86 @@ static void insert_iof_handler(Module *M, map<string, vector<pair<string, string
 
 }
 
+static void insert_nullderef_handler(Module *M, map<string, vector<pair<string, string>>> structInfo){
+    for(auto &F: *M) {
+        if (F.isDeclaration())
+            continue;
+
+        if(F.getName().str() != "xmlDumpElementContent") continue;
+
+        std::map<Value *, string> valueNameMap = collect_variable_metadata(F);
+        string fnameStr = F.getName().str();
+
+        for (auto &BB: F) {
+            for (auto &I: BB) {
+                auto * GEP = dyn_cast<GetElementPtrInst>(&I);
+                if (!GEP)
+                    continue;
+
+                if (!GEP->isInBounds())
+                    continue;
+
+                if(!I.getDebugLoc())
+                    continue;
+
+                if(I.getDebugLoc().getLine() != 1181) continue;
+
+                Type* SrcTP = GEP->getSourceElementType();
+                if(!SrcTP->isStructTy())
+                    continue;
+
+                string GEP_name_type = get_va_nm_tp(&F, GEP, valueNameMap, structInfo);
+
+                //errs()<<"GEP_name_type <<<<<<<<<<: "<<GEP_name_type<<"\n";
+
+                pair<string, string> GEPPair = parseBaseAndType(GEP_name_type);
+                string GEP_name = GEPPair.first;
+                string GEP_type = GEPPair.second;
+
+                if(GEP_type == "")
+                    continue;
+
+                if(GEP_type.rfind("*") == string::npos)
+                    continue;
+
+                Module *M = F.getParent();
+                int line = I.getDebugLoc().getLine();
+                string loc = M->getName().str() + ":" + fnameStr + ":" + to_string(line);
+
+                string msg = GEP_name + "#" + loc;
+                Constant *msgConst = ConstantDataArray::getString(M->getContext(), msg, true);
+                size_t len = msg.length() + 1;
+                Type *arr_type = ArrayType::get(IntegerType::get(M->getContext(), 8), len);
+                GlobalVariable *gvar_name = new GlobalVariable(*M,
+                                                               arr_type,
+                                                               true,
+                                                               GlobalValue::PrivateLinkage,
+                                                               msgConst,
+                                                               ".str");
+                gvar_name->setAlignment(1);
+
+                ConstantInt *zero = ConstantInt::get(M->getContext(), APInt(32, StringRef("0"), 10));
+
+                std::vector<Constant *> indices;
+                indices.push_back(zero);
+                indices.push_back(zero);
+
+                Constant *get_ele_ptr = ConstantExpr::getGetElementPtr(arr_type, gvar_name, indices);
+
+                IRBuilder<> builder(GEP);
+                builder.SetInsertPoint(I.getNextNode());
+
+                Constant *func = M->getOrInsertFunction("lowfat_null_deref_check",
+                                                        builder.getVoidTy(),
+                                                        builder.getInt8PtrTy(), builder.getInt8PtrTy(), nullptr);
+
+                Value* BC = builder.CreateBitCast(GEP, builder.getInt8PtrTy());
+                builder.CreateCall(func, {BC, get_ele_ptr});
+            }
+        }
+    }
+}
+
 
 
 /*
@@ -3930,6 +4012,10 @@ struct LowFat : public ModulePass
             // integer overflow handler
             insert_iof_handler(&M, structInfo);
             insert_sft_handler(&M, structInfo);
+
+            if(option_null_deref)
+                insert_nullderef_handler(&M, structInfo);
+
         }
 
         if (option_debug)

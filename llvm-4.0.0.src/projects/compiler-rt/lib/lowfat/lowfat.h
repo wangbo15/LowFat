@@ -165,6 +165,8 @@ extern void lowfat_oob_warning(unsigned _info, const void *_ptr,
 
 extern void lowfat_null_deref_check(const void *ptr, const char* msg);
 
+extern void lowfat_arroob_check_verbose(size_t bound, size_t idx, const char* msg);
+
 extern void lowfat_oob_check_verbose(unsigned info, const void *ptr, size_t size,
                              const void *baseptr, const char* msg);
 

@@ -859,6 +859,31 @@ extern void lowfat_null_deref_check(const void *ptr, const char* msg)
             location, ptr_name);
 }
 
+extern void lowfat_arroob_check_verbose(size_t bound, size_t idx, const char* msg){
+    char **arr = NULL;
+    int count = split(msg, '#', &arr);
+    if(count != 2){
+        fprintf(stderr, "ERROR MESSAGE FORMAT @lowfat_arroob_check_verbose: %s\n", msg);
+        abort();
+    }
+    char* ptr_name = arr[0];
+    char* location = arr[1];
+
+    if (idx >= bound) {
+        FILE* output = fopen("/tmp/cfc.out", "w");
+        fprintf(stderr, "LOWFAT ARRAY OOB CONSTRAINT >>>>>>> (%s < %u), LOCATION: %s\n", ptr_name, bound, location);
+        fprintf(output, "%s#(%s < %u)\n", location, ptr_name, bound);
+        fprintf(stderr, "Constraint has been written to /tmp/cfc.out\n");
+        fclose(output);
+
+        lowfat_error(
+                "out-of-array-bounds error detected!\n"
+                "\tlocation  = %s\n"
+                "\tindex     = %s\n",
+                location, ptr_name);
+    }
+}
+
 
 /**
  * @param info

@@ -181,6 +181,10 @@ static cl::opt<bool> option_symbolize("lowfat-symbolize",
 static cl::opt<bool> option_memcpy_overlap("lowfat-memcpy-overlap",
                                       cl::desc("Check for memcpy overlap"));
 
+static cl::opt<bool> option_arr_bound_check("lowfat-arrbound-check",
+                                           cl::desc("Check for array bound"));
+
+
 static cl::opt<bool> option_null_deref("lowfat-null-deref",
                                       cl::desc("Check for null dereference"));
 
@@ -3480,6 +3484,105 @@ static void replace_oob_checker(Module *M, map<string, vector<pair<string, strin
     }
 }//replace_oob_checker(Module *M)
 
+static void array_bound_check(Module *M, map<string, vector<pair<string, string>>> &structInfo) {
+    for(auto &F: *M) {
+
+        if (F.isDeclaration())
+            continue;
+
+        std::map<Value *, string> valueNameMap = collect_variable_metadata(F);
+        for (auto &BB: F) {
+
+            //if(F.getName().str() != "get_sos") { continue;  }
+
+            for (auto &I: BB) {
+
+                const DebugLoc &location = I.getDebugLoc();
+                if(!location)
+                    continue;
+
+                //if(I.getDebugLoc().getLine() != 344) continue;
+
+                auto * GEP = dyn_cast<GetElementPtrInst>(&I);
+                if(!GEP)
+                    continue;
+
+                auto *PTy = dyn_cast<PointerType>(GEP->getPointerOperandType());
+                if(!PTy)
+                    continue;
+
+                auto *AT = dyn_cast<ArrayType>(PTy->getPointerElementType());
+                if(!AT)
+                    continue;
+
+                Value *offset = nullptr;
+                if (GEP->getNumOperands() == 2)
+                    offset = GEP->getOperand(1);
+                else if (GEP->getNumOperands() == 3)
+                    offset = GEP->getOperand(2);
+
+                if(!offset)
+                    continue;
+
+                auto* offsetType = offset->getType();
+                if(offsetType->getIntegerBitWidth() != 64)
+                    continue;
+
+                string offset_name_type;
+                if(getConstantIntVal(offset))
+                    continue;
+
+                offset_name_type = get_va_nm_tp(&F, offset, valueNameMap, structInfo);
+                pair<string, string> offsetPair = parseBaseAndType(offset_name_type);
+                string offset_name = offsetPair.first;
+
+                if(offset_name == "")
+                    continue;
+
+                uint64_t bound = AT->getNumElements();
+                if(bound == 0)
+                    continue;
+
+                IRBuilder<> builder(GEP);
+                Value* Func = M->getOrInsertFunction("lowfat_arroob_check_verbose",
+                                                     builder.getVoidTy(),
+                                                     builder.getInt64Ty(),
+                                                     builder.getInt64Ty(),
+                                                     builder.getInt8PtrTy(), nullptr);
+
+                ConstantInt* CI = builder.getInt64(bound);
+
+                int line = location.getLine();
+                string loc = M->getName().str() + ":" + F.getName().str() + ":" + to_string(line);
+                string msg = offset_name + "#" + loc;
+
+                Constant *msgConst = ConstantDataArray::getString(M->getContext(), msg, true);
+
+                // plus one for \0
+                size_t len = msg.length() + 1;
+
+                Type *arr_type = ArrayType::get(IntegerType::get(M->getContext(), 8), len);
+                GlobalVariable *gvar_name = new GlobalVariable(*M,
+                                                               arr_type,
+                                                               true,
+                                                               GlobalValue::PrivateLinkage,
+                                                               msgConst,
+                                                               ".str");
+                gvar_name->setAlignment(1);
+                ConstantInt *zero = ConstantInt::get(M->getContext(), APInt(32, StringRef("0"), 10));
+
+                std::vector<Constant *> indices;
+                indices.push_back(zero);
+                indices.push_back(zero);
+
+                Constant *get_ele_ptr = ConstantExpr::getGetElementPtr(arr_type, gvar_name, indices);
+
+                builder.CreateCall(Func, {CI, offset, get_ele_ptr});
+            }
+        }
+    }
+}
+
 
 static void memory_overlap_check(Module *M, map<string, vector<pair<string, string>>> &structInfo) {
     for(auto &F: *M){
@@ -4011,9 +4114,13 @@ struct LowFat : public ModulePass
 
             replace_oob_checker(&M, structInfo);
 
-            if (option_memcpy_overlap) {
+            if (option_memcpy_overlap)
                 memory_overlap_check(&M, structInfo);
-            }
+
+
+            if (option_arr_bound_check)
+                array_bound_check(&M, structInfo);
+
 
             // integer overflow handler
             insert_iof_handler(&M, structInfo);
